@@ -1,0 +1,91 @@
+# Native LVGL desktop simulator
+
+This is a C application linked against LVGL **9.2.2**, pinned to commit `7f07a129e8d77f4984fff8e623fd5be18ff42e74`. There is no HTML, JavaScript, browser, or webview in its render path. `atmos.c` issues LVGL draw commands during an LVGL object's draw event. LVGL rasterizes those commands into its framebuffer; The display, scene canvases and transition frame are all 1-bit `LV_COLOR_FORMAT_I1`, matching the ST7305 panel; `main_win32.c` expands the bits to simulator tones (default #303030 ink, #c6c6c6 paper; override with `--ink=RRGGBB --paper=RRGGBB` or `ATMOS_INK`/`ATMOS_PAPER`) and presents them with Windows GDI. Transition composition is integer fixed-point and copies the finished 1-bit frame straight into LVGL's output buffer.
+
+## Build and run
+
+On Windows, install CMake, Git, and the MSYS2 UCRT64 GCC toolchain (including `mingw32-make`). The script detects the standard `C:/msys64/ucrt64/bin` location; other installations must be on PATH.
+
+```powershell
+./desktop/build.ps1 -Run
+```
+
+The first build downloads the pinned LVGL source into `desktop/vendor/lvgl`. It requires network access. Later builds are local. The script checks the dependency revision, compiles the application with warnings treated as errors, runs CTest, and optionally launches `desktop/build/atmos.exe`.
+
+The window opens at 2Ã— native resolution. Resizing uses integer pixel scales and letterboxing. The render target is always 400 Ã— 300. Animation targets 40 fps; this is not measured hardware throughput.
+
+Windows presentation composes the frame and letterboxing in an offscreen bitmap before one visible copy, avoiding a visible black clear between frames. The first LVGL frame is rendered before the window is shown. Verification also checks the actual GDI presentation pixels at 1Ã—, 2Ã—, 3Ã—, and a letterboxed size.
+
+## Controls
+
+| Input | Action |
+|---|---|
+| 1â€“5 | Overview, CO2, particles, gases, climate |
+| Arrow keys, click, mouse wheel | Navigate |
+| Space | Pause motion and history sampling |
+| A | Toggle automatic cycling |
+| F1â€“F4 | Quiet morning, occupied room, cooking, open windows |
+| S | Save native-resolution `atmos-frame.bmp` in the working directory |
+| Escape | Close |
+
+Minimizing freezes active time. Scenes hold for 6.5 seconds. Portals take 1.4 seconds; artwork sweeps take 1.2 seconds. Navigation during movement keeps the latest requested destination. History starts empty, samples every two active seconds, and retains two minutes. All default readings are simulated. The demo status cutoffs remain illustrative. All four PM channels have independent simulated readings and independent fields for real sensor input.
+
+The continuous journey is overview â†’ status-circle zoom â†’ CO2 â†’ live-bubble zoom â†’ particles â†’ airflow sweep â†’ gases â†’ horizontal ribbon sweep â†’ climate â†’ inverse status portal â†’ overview. Reverse navigation reverses the corresponding treatment. Both scenes keep animating during transitions. A real visible CO2 bubble is selected and anchored for the zoom. Gas/climate travel reveals both animated detail pages through the ribbon sweep; their selected-channel historical graphs remain part of the captured scenes. Transitions use nearest-pixel sampling and opaque masks, with no alpha crossfade or tones other than ink and paper.
+
+## Migration status
+
+All five scenes, 1-bit output, animated status/fan/bubbles/ribbons, scenario interpolation, shared immutable history, queued navigation, pause, automatic cycling, frame export, and external sensor input are implemented in C.
+
+This native port is not pixel-identical to the reference. It uses shared native-size DejaVu Sans Bold fonts, simplified fan/status/ribbon geometry, and immediate numeric changes. The browser's checkmark reveal and rolling digits/footer transitions remain fidelity work. Browser preview controls remain in the original files.
+
+During transitions, two hidden LVGL canvases rasterize the live source/destination scenes. A platform-independent C compositor zooms and reveals those pixels, and LVGL presents the composed image. The gas ribbon artwork uses opaque LVGL spans. The browser renderer is not involved.
+
+## Verification
+
+`build.ps1` runs `atmos --self-test` through CTest. Model checks cover empty history, sample timing, immutable history, scenario warning behavior, pruning, queued navigation, pause/minimize time freezing, and supplied sensor readings. Transition endpoints are compared to live source/destination rasters for all 20 directed scene pairs. Render checks exercise all 20 scene/scenario combinations, forward/reverse navigation, and intermediate transitions using the actual linked LVGL renderer, checking every pixel for the exact palette and rejecting empty frames. BMPs are written in `desktop/build/`. These are smoke/invariant checks, not a pixel comparison against the browser reference or a benchmark of the physical panel.
+
+For visual review, run `./atmos.exe --capture-transitions` from `desktop/build`, then run `python desktop/render_review.py` from the project root (requires Pillow). This creates frame sheets and GIFs in `artifacts/` for quiet and warning scenarios. Those GIFs sample the animation every 200 ms for inspection; the native application targets 40 fps.
+
+## Later hardware port
+
+`atmos.c` and `atmos.h` contain no Windows APIs. On hardware, initialize LVGL and a 400 Ã— 300 display, register the panel flush callback, call `atmos_init()`, advance `atmos_step()` with elapsed active seconds, and service LVGL's tick/timer handler. Pass real readings through `atmos_set_readings()`; this disables generated demo readings until another demo scenario is selected. Values are CO2 ppm, PM2.5 ug/m3, VOC/NOx indices, temperature Celsius, and relative humidity percent.
+
+The current desktop setup uses a 480 KB draw buffer, a separate 480 KB presentation buffer, three 480 KB transition buffers, an 8 KB axis-label raster, and a 4 MB LVGL heap, plus Windows presentation bitmaps. Those are desktop choices, not an ESP32 memory budget. A hardware port must select an appropriate color format, memory placement and buffering strategy, verify panel support for the requested third gray and pack pixels for the panel, integrate SCD30/SEN66 drivers, and measure refresh throughput, CPU, memory, and power. [LVGL display driver documentation](https://docs.lvgl.io/9.2/porting/display.html) describes the flush boundary. No firmware build or physical panel support is claimed here.
+
+LVGL remains under its upstream MIT license in `vendor/lvgl/LICENCE.txt`.
+
+The redesigned overview and reusable native design tokens are documented in [UI design system](../docs/UI_DESIGN_SYSTEM.md). The overview footer now keeps PM2.5 and temperature visible; VOC and humidity remain available in their detail scenes.
+
+CO2 detail captures: run `./atmos.exe --capture-co2` from `desktop/build` for empty, short, full and wide-range histories. Chart labels use seconds before the newest stored sample; SEC AGO appears once. Chart fill is paper on the ink history panel; the panel has no grey. See [UI design system](../docs/UI_DESIGN_SYSTEM.md).
+
+
+PM detail: press 3, click a measurement card, or use Tab / ] / [ to cycle the selected
+PM size. All four cards stay live. atmos_readings fields pm1, pm (PM2.5), pm4 and
+pm10 are independent cumulative mass concentrations; integrations must supply each
+field, or NAN for unavailable channels. Use designated initializers. No PM channel
+is derived from another. All detail charts use solid medium-gray fill and shared axes.
+
+Run ./atmos.exe --capture-pm from desktop/build for independent-channel history,
+all four selections, graph blends, rapid reselection, large readings and missing
+channels. The full geometry, motion and new sensor contract are documented in
+[UI design system](../docs/UI_DESIGN_SYSTEM.md).
+
+
+### Gases detail review
+
+GASES uses shared bold typography, a selected-channel badge, equal-size VOC/NOx
+readouts and two animated ribbons. One fixed-size history chart shows the
+selected channel; click a readout to switch. The graph uses the same solid medium-gray
+fill and axes as the other detail pages. Ribbon thickness settles toward the
+live index with a 1.5-second time constant. Current geometry and typography are
+specified in `../docs/UI_DESIGN_SYSTEM.md`.
+
+After building, from `desktop/build` run `./atmos.exe --capture-gases` for empty,
+short/full history, animation, live changes, missing values and both navigation
+directions under GOOD/CHECK AIR readings. Captures are desktop verification only.
+
+Gases navigation uses a curved horizontal ribbon sweeping vertically: top to
+bottom when entering from particles or climate, bottom to top when exiting.
+Both scene artworks remain animated during the 1.2-second sweep.
+
+The full visual standardization is documented in [UI design system](../docs/UI_DESIGN_SYSTEM.md). All headers use the same title, badge and divider geometry; all charts share one renderer. The native six-state comparison is `../artifacts/redesign-after.png`.

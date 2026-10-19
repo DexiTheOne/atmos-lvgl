@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#191919">
+  <title>Atmos — 400 × 300 RLCD preview</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header><strong>ATMOS <span>/ RLCD MOTION STUDY</span></strong><span>400 × 300 · LANDSCAPE · 2 TONES</span></header>
+  <div class="display-window"><div class="bezel"><canvas id="display" width="400" height="300" tabindex="0" aria-label="Animated landscape RLCD display, 400 by 300 square pixels, two gray colors. Click for next scene."></canvas></div></div>
+  <div class="readout"><span><i></i><span id="fps">40</span> FPS <span class="muted">/ BROWSER</span></span><span id="pixelInfo">2× · EACH PIXEL IS 2 × 2 CSS PIXELS</span></div>
+  <nav aria-label="Display scenes"><button data-scene="0" aria-pressed="true">01 Overview</button><button data-scene="1" aria-pressed="false">02 CO₂</button><button data-scene="2" aria-pressed="false">03 Particles</button><button data-scene="3" aria-pressed="false">04 Gases</button><button data-scene="4" aria-pressed="false">05 Climate</button></nav>
+  <div class="toolbar">
+    <button id="previous" aria-label="Previous scene">←</button><button id="play" aria-label="Pause animation">Pause</button><button id="next" aria-label="Next scene">→</button>
+    <label class="check"><input type="checkbox" id="auto" checked> Auto-cycle</label>
+    <label class="select-label">Scenario <select id="scenario"><option value="calm">Quiet morning</option><option value="occupied">Room full of people</option><option value="cooking">Cooking</option><option value="fresh">Open windows</option></select></label>
+    <label class="select-label">Scale <select id="scale"><option value="1">1× native</option><option value="2" selected>2× pixels</option><option value="3">3× pixels</option></select></label>
+    <button id="snapshot">Save frame</button>
+  </div>
+  <footer><span>DUMMY DATA · SCD30 + SEN66</span><span>SCROLL OR CLICK DISPLAY TO EXPLORE · SPACE: PAUSE</span></footer>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
