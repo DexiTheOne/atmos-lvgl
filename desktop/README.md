@@ -1,6 +1,6 @@
 # Native LVGL desktop simulator
 
-This is a C application linked against LVGL **9.2.2**, pinned to commit `7f07a129e8d77f4984fff8e623fd5be18ff42e74`. There is no HTML, JavaScript, browser, or webview in its render path. `atmos.c` issues LVGL draw commands during an LVGL object's draw event. LVGL rasterizes those commands into its framebuffer; The display, scene canvases and transition frame are all 1-bit `LV_COLOR_FORMAT_I1`, matching the ST7305 panel; `main_win32.c` expands the bits to simulator tones (default #303030 ink, #c6c6c6 paper; override with `--ink=RRGGBB --paper=RRGGBB` or `ATMOS_INK`/`ATMOS_PAPER`) and presents them with Windows GDI. Transition composition is integer fixed-point and copies the finished 1-bit frame straight into LVGL's output buffer.
+This is a C application linked against LVGL **9.5.0** (the version in released ESPHome), pinned to commit `85aa60d18b3d5e5588d7b247abf90198f07c8a63`. There is no HTML, JavaScript, browser, or webview in its render path. `atmos.c` issues LVGL draw commands during an LVGL object's draw event. LVGL rasterizes those commands into its framebuffer. The display renders RGB565, as under ESPHome; scene canvases and the transition frame are 1-bit `LV_COLOR_FORMAT_I1`. `main_win32.c` thresholds each pixel to 1 bit, as the ST7305 driver must, and maps the bits to simulator tones (default #303030 ink, #c6c6c6 paper; override with `--ink=RRGGBB --paper=RRGGBB` or `ATMOS_INK`/`ATMOS_PAPER`) and presents them with Windows GDI. Transition composition is integer fixed-point and writes the finished 1-bit frame straight into LVGL's output buffer in the display's colour format. See AGENTS.md, ESPHome integration, for the build flags the device YAML needs.
 
 ## Build and run
 
@@ -89,3 +89,5 @@ bottom when entering from particles or climate, bottom to top when exiting.
 Both scene artworks remain animated during the 1.2-second sweep.
 
 The full visual standardization is documented in [UI design system](../docs/UI_DESIGN_SYSTEM.md). All headers use the same title, badge and divider geometry; all charts share one renderer. The native six-state comparison is `../artifacts/redesign-after.png`.
+
+Header badges show a rating of the page's selected measurement: Good, Fair or Poor (`--` when the reading is missing). The overview badge shows the worst rating across all measurements, and its warning symbol appears when that is Poor. The limits in `ui_theme.h` (`UI_CO2_FAIR`, `UI_PM25_POOR`, ...) are placeholders to be tuned.

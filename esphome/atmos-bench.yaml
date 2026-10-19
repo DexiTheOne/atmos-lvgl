@@ -1,0 +1,60 @@
+# Frame-pacing benchmark: the Atmos UI on a bare ESP32-S3 (Seeed XIAO ESP32-S3).
+# No panel needs to be attached. Frames still go through ESPHome's real path:
+# the atmos component owns LVGL (no lvgl: block) and renders a native 1-bit frame;
+# the ST7305 driver (local copy in components/st7305_rlcd) rearranges the redrawn
+# rows into the panel layout and writes the full frame over SPI to pins with
+# nothing connected.
+#
+#   ../.venv-esphome/Scripts/esphome run atmos-bench.yaml --device COM12
+#
+# Results are logged at INFO every 10 s and after every transition.
+
+esphome:
+  name: atmos-bench
+  # Short build path: ESP-IDF object paths exceed Windows' 260-character limit
+  # when long paths are disabled. Also set ESPHOME_ESP_IDF_PREFIX=C:\ESPHome\idf.
+  build_path: C:/ESPHome/build/atmos-bench
+
+esp32:
+  board: seeed_xiao_esp32s3
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+# XIAO pins: D8 = GPIO7 (SCK), D10 = GPIO9 (MOSI), D1-D3 = GPIO2-4. Nothing attached.
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+
+display:
+  - platform: st7305_rlcd
+    id: panel
+    model: WAVESHARE_400X300
+    # 40 MHz: reported working on this panel by a community build (artefacts near
+    # 60 MHz); not yet verified on our panel. The driver default is 10 MHz.
+    data_rate: 40MHz
+    cs_pin: GPIO2
+    dc_pin: GPIO3
+    reset_pin: GPIO4
+    auto_clear_enabled: false
+    update_interval: never
+
+atmos:
+  display_id: panel
+  frame_period: 25ms
+  report_interval: 10s

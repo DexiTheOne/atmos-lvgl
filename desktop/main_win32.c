@@ -7,23 +7,43 @@
 #include "atmos.h"
 #include "ui_theme.h"
 #include <math.h>
+#define STRINGIFY_(x) #x
+#define STRINGIFY(x) STRINGIFY_(x)
+#define LVGL_VERSION_TEXT STRINGIFY(LVGL_VERSION_MAJOR) "." STRINGIFY(LVGL_VERSION_MINOR) "." STRINGIFY(LVGL_VERSION_PATCH)
 
-/* LVGL renders 1-bit I1 frames: 8-byte palette, then 50-byte MSB-first rows. */
-static uint8_t draw_buffer[8+400/8*300], frame_bits[400/8*300];
+/* As on the device, LVGL renders a 1-bit I1 frame: an 8-byte palette, then 50-byte
+   MSB-first rows, bit 1 = paper. */
+static uint8_t draw_buffer[8+400/8*300];
+static uint8_t frame_bits[400/8*300];
 static uint32_t pixels[400*300];
 /* Simulator-only display tones for ink (bit 0) and paper (bit 1). Override with
    --ink=RRGGBB / --paper=RRGGBB or ATMOS_INK / ATMOS_PAPER. */
 static uint32_t ink_rgb=0x303030, paper_rgb=0xc6c6c6;
 static HWND window;
-static unsigned flushes;
+/* --hw-pace (or H): hold each frame on screen for as long as the same kind of frame
+   takes on the device, and advance the model the way the device loop does. Measured
+   on a Seeed XIAO ESP32-S3 (240 MHz) with esphome/atmos-bench.yaml on 2026-10-18:
+   own LVGL, 1-bit display, direct fills, table compositor, ST7305 SPI at 40 MHz
+   (40 MHz is not yet verified on a real panel; at 10 MHz add about 9 ms per frame).
+   Milliseconds of work per frame: still frames per scene, transition frames per
+   source scene, and hold-time pre-render steps per rasterised scene (from the
+   device's PROFILE log line). hw_loop_ms is the device loop overhead between frames
+   (frame interval minus frame work, averaged over the run). */
+static bool hw_pace;
+static const double hw_still_ms[5]={70.9,26.4,116.0,70.1,25.2};
+static const double hw_trans_ms[5]={26.0,27.8,28.2,31.0,25.9};
+static const double hw_prerender_ms[5]={71.8,62.2,151.8,96.9,62.0};
+static const double hw_loop_ms=4.0;
+static void update_title(void);
+static unsigned flushes,transitions_checked;
 static lv_display_t *display;
 static BITMAPINFO bitmap;
+/* Direct render mode, as on the device: LVGL redraws only invalidated areas in a
+   persistent frame buffer, so partial redraws are exercised here. */
 static void flush(lv_display_t *disp,const lv_area_t *area,uint8_t *map){
-    map+=8; /* skip the I1 palette */
-    int stride=(area->x2-area->x1+1+7)/8;
+    const uint8_t *rows=map+8; /* skip the I1 palette; map is the whole frame */
     for(int y=area->y1;y<=area->y2;y++)for(int x=area->x1;x<=area->x2;x++){
-        int bx=x-area->x1;
-        bool paper=map[(y-area->y1)*stride+bx/8]>>(7-(bx&7))&1;
+        bool paper=rows[y*50+x/8]>>(7-(x&7))&1;
         uint8_t mask=(uint8_t)(0x80>>(x&7));
         if(paper)frame_bits[y*50+x/8]|=mask;else frame_bits[y*50+x/8]&=(uint8_t)~mask;
         pixels[y*400+x]=paper?paper_rgb:ink_rgb;
@@ -115,6 +135,7 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key==VK_TAB || key==VK_OEM_6)atmos_cycle_pm(1);
         else if(key==VK_OEM_4)atmos_cycle_pm(-1);
         else if(key=='A')atmos_toggle_auto();
+        else if(key=='H'){hw_pace=!hw_pace;update_title();}
         else if(key=='S')save_bmp("atmos-frame.bmp");
         else if(key==VK_ESCAPE)DestroyWindow(hwnd);
         return 0;
@@ -123,6 +144,27 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
     return DefWindowProc(hwnd,message,key,data);
 }
 static void advance(void){atmos_step(.025);lv_tick_inc(25);lv_timer_handler();}
+/* A partial redraw must leave exactly the frame a full redraw of the same moment
+   produces; otherwise something animates outside its scene's redraw area. */
+static unsigned partial_checked;
+static int verify_partial(void){
+    static uint8_t partial[sizeof frame_bits];
+    lv_refr_now(display); /* draw any invalidation the refresh timer has not reached yet */
+    memcpy(partial,frame_bits,sizeof partial);
+    lv_obj_invalidate(lv_screen_active());lv_refr_now(display);
+    partial_checked++;
+    int n=0,x1=999,y1=999,x2=-1,y2=-1;
+    for(int i=0;i<400*300;i++){
+        bool p=partial[i/8]>>(7-(i&7))&1,f=frame_bits[i/8]>>(7-(i&7))&1;
+        if(p!=f){n++;int x=i%400,y=i/400;if(x<x1)x1=x;if(x>x2)x2=x;if(y<y1)y1=y;if(y>y2)y2=y;}
+    }
+    if(n){
+        fprintf(stderr,"Partial redraw: %d pixels differ within %d,%d-%d,%d (full frame saved as partial-check-full.bmp)\n",
+            n,x1,y1,x2,y2);
+        save_bmp("partial-check-full.bmp");
+    }
+    return n!=0;
+}
 static int verify_frame(void){
     unsigned ink=0,paper=0;
     for(unsigned i=0;i<400*300;i++){
@@ -139,12 +181,20 @@ static bool parse_rgb(const char *text,uint32_t *out){
     if(end-text!=6 || *end)return false;
     *out=(uint32_t)value;return true;
 }
+static void update_title(void){
+    if(!window)return;
+    char title[200];
+    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-5 scenes | F1-F4 scenarios | Space pause | A auto | H hw pace | S save",
+        hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"");
+    SetWindowText(window,title);
+}
 int main(int argc,char **argv){
     parse_rgb(getenv("ATMOS_INK"),&ink_rgb);parse_rgb(getenv("ATMOS_PAPER"),&paper_rgb);
     /* Colour options may appear anywhere; the remaining argument selects the mode. */
     int kept=1;
     for(int i=1;i<argc;i++){
         if(strncmp(argv[i],"--ink=",6)==0){if(!parse_rgb(argv[i]+6,&ink_rgb)){fprintf(stderr,"Bad --ink\n");return 2;}}
+        else if(strcmp(argv[i],"--hw-pace")==0)hw_pace=true;
         else if(strncmp(argv[i],"--paper=",8)==0){if(!parse_rgb(argv[i]+8,&paper_rgb)){fprintf(stderr,"Bad --paper\n");return 2;}}
         else argv[kept++]=argv[i];
     }
@@ -154,7 +204,7 @@ int main(int argc,char **argv){
     bitmap.bmiHeader.biPlanes=1;bitmap.bmiHeader.biBitCount=32;bitmap.bmiHeader.biCompression=BI_RGB;
     lv_init();display=lv_display_create(400,300);
     lv_display_set_color_format(display,LV_COLOR_FORMAT_I1);
-    lv_display_set_buffers(display,draw_buffer,NULL,sizeof draw_buffer,LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_buffers(display,draw_buffer,NULL,sizeof draw_buffer,LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(display,flush);atmos_init();
     if(argc>1 && strcmp(argv[1],"--capture-stress")==0){
         atmos_toggle_auto();
@@ -310,6 +360,15 @@ int main(int argc,char **argv){
                 for(int i=0;i<72;i++){
                     advance();
                     if(verify_frame()){fprintf(stderr,"Invalid palette or empty frame\n");return 10;}
+                    /* The presented frame must be exactly the composed 1-bit transition. */
+                    const uint8_t *composed=atmos_transition_frame();
+                    if(composed){
+                        transitions_checked++;
+                        if(memcmp(composed,frame_bits,sizeof frame_bits)){fprintf(stderr,"Transition frame mismatch\n");return 29;}
+                    }else if(verify_partial()){
+                        fprintf(stderr,"Partial redraw differs from full redraw (scenario %d scene %d frame %d)\n",scenario,screen,i);
+                        return 31;
+                    }
                     if(capture && (scenario==0 || scenario==2) && i%8==0){
                         char path[100];snprintf(path,sizeof path,"transition-%d-to-%d-frame-%02d.bmp",scenario,screen,i);
                         save_bmp(path);
@@ -323,7 +382,26 @@ int main(int argc,char **argv){
             atmos_set_scene(screen);
             for(int i=0;i<72;i++){advance();if(verify_frame())return 13;}
         }
+        /* Automatic cycling through every transition twice, as on the device: exercises
+           hold-time pre-rendering of every scene. */
+        unsigned prerendered_before=atmos_prerendered_transitions();
+        atmos_toggle_auto();
+        for(int i=0;i<2*5*(260+56);i++){
+            advance();
+            if(verify_frame())return 33;
+            const uint8_t *composed=atmos_transition_frame();
+            if(composed && memcmp(composed,frame_bits,sizeof frame_bits))return 34;
+        }
+        atmos_toggle_auto();
+        if(atmos_prerendered_transitions()-prerendered_before<5){
+            fprintf(stderr,"Automatic cycle: only %u pre-rendered transitions\n",atmos_prerendered_transitions()-prerendered_before);return 35;}
+        printf("Automatic cycle: %u transitions started from hold-time snapshots; %u clamped fills.\n",
+            atmos_prerendered_transitions()-prerendered_before,atmos_clip_overruns());
         if(flushes<100)return 11;
+        if(transitions_checked<100)return 30;
+        if(partial_checked<100)return 32;
+        printf("Partial redraw: %u still frames matched a full redraw exactly.\n",partial_checked);
+        printf("Transitions: %u mid-transition frames matched the composed 1-bit frame exactly.\n",transitions_checked);
         printf("LVGL %d.%d.%d: %u flushes; all scenes/scenarios and transitions rendered in the approved palette.\n",LVGL_VERSION_MAJOR,LVGL_VERSION_MINOR,LVGL_VERSION_PATCH,flushes);
         puts("Windows GDI presentation: exact pixels at 1x/2x/3x and letterboxed sizes passed.");
         lv_deinit();return 0;
@@ -334,14 +412,18 @@ int main(int argc,char **argv){
     wc.lpszClassName="AtmosLVGL";wc.hCursor=LoadCursor(NULL,IDC_ARROW);
     if(!RegisterClass(&wc))return 20;
     RECT size={0,0,800,600};AdjustWindowRect(&size,WS_OVERLAPPEDWINDOW,FALSE);
-    window=CreateWindow(wc.lpszClassName,"Atmos | LVGL 9.2.2 | 1-5 scenes | F1-F4 scenarios | Space pause | A auto | S save",
+    window=CreateWindow(wc.lpszClassName,"Atmos",
         WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,size.right-size.left,size.bottom-size.top,NULL,NULL,instance,NULL);
     if(!window)return 21;
+    update_title();
     /* The launcher hides the console via STARTUPINFO. Windows applies that
        setting to the first ShowWindow call; explicitly show the UI afterwards. */
     lv_refr_now(display);
     ShowWindow(window,SW_SHOW);ShowWindow(window,SW_SHOW);UpdateWindow(window);
-    ULONGLONG previous=GetTickCount64();bool running=true;
+    LARGE_INTEGER frequency,counter;QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&counter);
+    double previous=counter.QuadPart*1000.0/frequency.QuadPart,next_frame=previous,tick_carry=0;
+    bool running=true;
     while(running){
         MSG message;
         while(PeekMessage(&message,NULL,0,0,PM_REMOVE)){
@@ -349,8 +431,21 @@ int main(int argc,char **argv){
             TranslateMessage(&message);DispatchMessage(&message);
         }
         if(!running)break;
-        ULONGLONG now=GetTickCount64();DWORD elapsed=(DWORD)(now-previous);previous=now;
-        lv_tick_inc(elapsed);atmos_step(elapsed/1000.0);lv_timer_handler();Sleep(2);
+        QueryPerformanceCounter(&counter);
+        double now=counter.QuadPart*1000.0/frequency.QuadPart;
+        if(hw_pace && now<next_frame){Sleep(1);continue;}
+        double elapsed=now-previous;previous=now;
+        tick_carry+=elapsed;uint32_t ticks=(uint32_t)tick_carry;tick_carry-=ticks;lv_tick_inc(ticks);
+        atmos_step(elapsed/1000.0);
+        if(!hw_pace){lv_timer_handler();Sleep(2);continue;}
+        /* One device frame: step, render, then hold for the device's cost of that frame
+           (never less than the 25 ms step period). */
+        int pre=atmos_step_prerendered();
+        lv_refr_now(display);
+        double cost=atmos_is_moving()?hw_trans_ms[atmos_scene()]:hw_still_ms[atmos_scene()];
+        if(pre>=0)cost+=hw_prerender_ms[pre];
+        cost+=hw_loop_ms;
+        next_frame=now+(cost>25?cost:25);
     }
     window=NULL;lv_deinit();return 0;
 }

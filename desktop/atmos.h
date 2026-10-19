@@ -21,4 +21,22 @@ void atmos_select_pm(int size);
 void atmos_cycle_pm(int direction);
 bool atmos_select_pm_at(int x,int y);
 int atmos_self_test(void);
+/* Test hook: the 1-bit frame (50-byte MSB-first rows, 1 = paper) composed for
+   the last transition draw, or NULL when no transition was drawn. */
+const uint8_t *atmos_transition_frame(void);
+/* True while a scene transition is in progress (for frame-pacing measurement). */
+bool atmos_is_moving(void);
+/* Transitions that started from snapshots pre-rendered during the hold. */
+unsigned atmos_prerendered_transitions(void);
+/* Current scene (0-4) and, while moving, the transition's destination. */
+int atmos_scene(void);
+/* Diagnostic: direct fills that were clamped to the layer buffer. Should stay 0. */
+unsigned atmos_clip_overruns(void);
+const char *atmos_overrun_detail(void);
+/* Optional profiling: a microsecond clock, and the average transition compose time. */
+void atmos_set_clock(uint32_t (*us)(void));
+float atmos_compose_ms(void);
+int atmos_destination(void);
+/* Scene rasterised by a hold-time pre-render during the latest atmos_step(), or -1. */
+int atmos_step_prerendered(void);
 #endif

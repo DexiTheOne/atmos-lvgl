@@ -1,2 +1,6 @@
 desktop/build/
 desktop/vendor/
+.venv-esphome/
+esphome/.esphome/
+esphome/secrets.yaml
+esphome/*.log

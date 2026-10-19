@@ -1,6 +1,6 @@
 # Atmos — LVGL desktop simulator and browser reference
 
-The native implementation is now in [`desktop/`](desktop/README.md). It compiles real **LVGL 9.2.2 C code** into a Windows application; LVGL draws the entire 400 × 300 interface. Windows only presents the framebuffer and forwards controls. Run `./desktop/build.ps1 -Run` to build, verify, and launch it. The browser version below remains a design reference.
+The native implementation is now in [`desktop/`](desktop/README.md). It compiles real **LVGL 9.5.0 C code** (the version released ESPHome uses) into a Windows application; LVGL draws the entire 400 × 300 interface. Windows only presents the framebuffer and forwards controls. Run `./desktop/build.ps1 -Run` to build, verify, and launch it. The browser version below remains a design reference.
 
 The desktop migration includes all five scenes and the shared sensor/history model. The native journey zooms through the overview status circle and a CO2 bubble, sweeps from particles into gases, and carries continuous ribbons horizontally into climate before returning through the status portal. Typography, ribbon geometry, and some animation details still differ from the browser reference. Hardware integration and hardware performance validation remain future work.
 
