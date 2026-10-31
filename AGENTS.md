@@ -1,4 +1,4 @@
-# Project policy: develop the LVGL implementation
+﻿# Project policy: develop the LVGL implementation
 
 The native LVGL application in `desktop/` is the source of truth for the product UI. From now on, implement rendering, layout, animation, navigation, and sensor/history changes there by default. A request to change "the rendering", "preview", "animation", or "UI" means the LVGL simulator unless the user explicitly says otherwise.
 
@@ -53,13 +53,13 @@ If the executable is locked during linking, close only this project's simulator 
 
 | Input | Action |
 |---|---|
-| 1–5 | Overview, CO2, particles, gases, climate |
+| 1â€“5 | Overview, CO2, particles, gases, climate |
 | Arrow keys, click, mouse wheel | Navigate |
 | Space | Pause motion and history sampling |
 | A | Toggle automatic cycling |
 | H | Toggle hardware pacing: hold each frame for its measured ESP32-S3 cost (also `--hw-pace`) |
-| F1–F4 | Quiet morning, occupied room, cooking, open windows |
-| S | Save 400 × 300 `atmos-frame.bmp` in the process working directory |
+| F1â€“F4 | Quiet morning, occupied room, cooking, open windows |
+| S | Save 400 Ã— 300 `atmos-frame.bmp` in the process working directory |
 | Escape | Close |
 
 Minimizing freezes active time. For visual feedback, pause the desired scene and use a screenshot with annotations; the native window is not a browser annotation surface.
@@ -80,13 +80,13 @@ The review script requires Pillow. Python with Pillow is currently available at 
 
 ## Preserve the display and interaction contract
 
-- Native resolution: 400 × 300, landscape. Present at integer pixel scales with letterboxing.
+- Native resolution: 400 Ã— 300, landscape. Present at integer pixel scales with letterboxing.
 - The target panel (Waveshare ESP32-S3-RLCD-4.2, ST7305) is 1-bit black/white. Draw only pure black (ink) and pure white (paper); there is no grey, so chart fill is paper. Under ESPHome, LVGL renders RGB565 and the display driver thresholds to 1 bit; the simulator does the same (luminance above half is paper). Preserve hard opaque transitions; avoid dither, alpha fades, or intermediate tones.
 - The simulator maps ink/paper to display tones only at presentation: defaults `#303030` / `#c6c6c6`, overridable with `--ink=RRGGBB --paper=RRGGBB` or `ATMOS_INK` / `ATMOS_PAPER`.
 - Scene and transition buffers are 15 KB I1 frames. The transition compositor uses integer fixed-point maths only; other model/artwork maths is single-precision `float`, with active-time timestamps kept in `double`.
 - Target animation cadence is 40 fps on desktop. Measure hardware separately.
 - Present completed frames from an offscreen Windows bitmap in one copy. Do not clear the visible display to black between frames. Render the initial LVGL frame before showing the window.
-- Keep scenes flowing through their artwork rather than reverting to generic slideshow transitions: overview → status-circle portal → CO2 → selected live-bubble portal → particles → airflow sweep → gases → horizontal ribbon sweep → climate → inverse status portal → overview.
+- Keep scenes flowing through their artwork rather than reverting to generic slideshow transitions: overview â†’ status-circle portal â†’ CO2 â†’ selected live-bubble portal â†’ particles â†’ airflow sweep â†’ gases â†’ horizontal ribbon sweep â†’ climate â†’ inverse status portal â†’ overview.
 - Each transition rasterises its two scenes once, at its first frame (for device speed): the outgoing scene at the transition's start time and the incoming scene at its end time, so artwork is still during travel and live drawing resumes without a jump. Preserve the selected bubble anchor (taken from the matching snapshot), keep gas/climate history ribbons continuous, and support reverse navigation. Current scene holds are 6.5 seconds; portals take 1.4 seconds and sweeps 1.2 seconds. Timing may be deliberately tuned for a requested animation change.
 - Navigation during movement queues the latest requested destination. Pause/minimize freezes motion and sampling time.
 - History starts empty, samples every two active seconds, retains two minutes, and never invents historical readings. Scenario changes preserve the existing samples.
@@ -100,22 +100,22 @@ The device build is an ESPHome external component, so `atmos.c` must compile wit
 - **Do not assume the display colour format.** The device and simulator now use a 1-bit I1 display, but ESPHome's LVGL component (if ever used again) supports only RGB565. Code that writes directly into an LVGL output layer, like `blit_transition()`, must handle the layer's actual `cf`.
 - **One LVGL configuration.** The atmos component adds LVGL itself (`LVGL_VERSION` in `esphome/components/atmos/__init__.py`, kept equal to the simulator pin) and builds it with `desktop/lv_conf.h`, so device and simulator share every LVGL option. ESPHome's `lvgl:` component must not be added alongside it (two LVGL configurations would conflict). On the device `lv_conf.h` selects a custom allocator (PSRAM first), provided by the component: with internal-RAM `malloc`, rasterising a scene into a canvas exhausted internal RAM and LVGL's malloc assert hung until the task watchdog reset the chip.
 - **LVGL version.** Keep `desktop/build.ps1` and the component's `LVGL_VERSION` in step (currently 9.5.0, as released ESPHome uses). Compile without deprecation warnings. Wrap APIs that change between versions in a small `LVGL_VERSION_MINOR` helper, as `hide_obj()` does, rather than using version-specific calls throughout.
-- **LVGL setup lives in the platform layer.** `main_win32.c` (simulator) and `esphome/components/atmos/atmos_component.cpp` (device) call `lv_init()`, set the tick, create the 400 × 300 I1 display in direct mode with a static 15 KB frame buffer, and run the timer handler. `atmos.c` only creates its objects, advances its model with `atmos_step()`, and accepts readings through `atmos_set_readings()`.
+- **LVGL setup lives in the platform layer.** `main_win32.c` (simulator) and `esphome/components/atmos/atmos_component.cpp` (device) call `lv_init()`, set the tick, create the 400 Ã— 300 I1 display in direct mode with a static 15 KB frame buffer, and run the timer handler. `atmos.c` only creates its objects, advances its model with `atmos_step()`, and accepts readings through `atmos_set_readings()`.
 - **Internal LVGL APIs.** `blit_transition()` relies on `lv_layer_t` fields and `lv_draw_dispatch_*`. Recheck them whenever the LVGL version moves; the self-test fails if the presented transition differs from the composed frame.
-- **ST7305 driver.** Use the local copy in `esphome/components/st7305_rlcd` (Apache-2.0, modified). The device flush calls `load_rows_i1()` to rearrange only the redrawn rows of the 1-bit frame into the panel's 2×4 block layout (about 2.5 ms for a full frame), then `push_buffer()`. Both are checked at start-up against the driver's pixel lookup tables. Its bulk RGB565 `draw_pixels_at()` remains for any 16-bit use; the stock per-pixel path's `Color::is_on()` treats any non-black pixel as ink.
+- **ST7305 driver.** Use the local copy in `esphome/components/st7305_rlcd` (Apache-2.0, modified). The device flush calls `load_rows_i1()` to rearrange only the redrawn rows of the 1-bit frame into the panel's 2Ã—4 block layout (about 2.5 ms for a full frame), then `push_buffer()`. Both are checked at start-up against the driver's pixel lookup tables. Its bulk RGB565 `draw_pixels_at()` remains for any 16-bit use; the stock per-pixel path's `Color::is_on()` treats any non-black pixel as ink.
 - **Windows build paths.** ESP-IDF's toolchain exceeds the 260-character path limit when Windows long paths are off. Use `ESPHOME_ESP_IDF_PREFIX=C:\ESPHome\idf` and `esphome: build_path: C:/ESPHome/build/<name>` (as `esphome/bench.ps1` and `atmos-bench.yaml` do) rather than changing system settings.
 - - **Pre-rendered transitions.** In automatic cycling, `prerender_step()` rasterises the next transition's snapshots during the hold, one per step, after the last history sample before it. `data_version` must be bumped by anything that changes displayed data (samples, readings, selections), or a stale snapshot will be used. Manual navigation renders the snapshots at the transition's first frame.
 - **Clip-aware redraw.** When the clip area lies inside `animated_area(scene)`, `draw_animated()` runs only that scene's artwork function, so static content inside a box must be drawn by that function. The self-test's partial-versus-full check enforces this; it caught the Gases box overlapping the history panel.
 - **Direct 1-bit fills.** `rect()` with radius 0 on an I1 layer writes bits directly (`direct_fill()`), after `sync_layer()` runs any queued LVGL tasks so ordering is kept. LVGL draw tasks cost a heap allocation and dispatch each, which dominated device frame time for span-built artwork. Prefer spans over many tiny LVGL shapes in hot paths.
 - **Guard float-to-int casts.** NaN or huge values cast to `int` differ by CPU (x86 gives `INT_MIN`, Xtensa `INT_MAX`) and can overflow later arithmetic. A NaN ribbon tip crashed the device while the simulator looked fine. Clamp inputs to `pow`/`sqrt` and reject far-off coordinates before arithmetic.
-- **SPI clock.** The benchmark runs the ST7305 at 40 MHz (reported working by a community build; artefacts near 60 MHz). Verify on the real panel and fall back to 20 MHz or 10 MHz if it shows artefacts. At 10 MHz the push is 12.6 ms per frame instead of 3.6 ms.
+- **SPI clock.** The benchmark runs the ST7305 at 40 MHz (reported working by a community build; artefacts near 60 MHz). Verified clean on the real panel on 2026-10-30; if artefacts appear, fall back to 20 MHz or 10 MHz. At 10 MHz the push is 12.6 ms per frame instead of 3.6 ms.
 - **Redraw only what moves.** Still scenes invalidate only `animated_area(scene)`; readings, history samples, selections, the PM chart blend and scene changes set `full_dirty` for a full redraw. When adding motion, extend that scene's area. The self-test fails if anything animates outside it.
 - **Per-frame work is the bottleneck on device, not LVGL's pixel fill.** The scene draw functions run in full even when LVGL clips to a small area, so keep per-pixel loops free of trig and other calls that depend only on the frame or column; compute those once per frame.
 - **Memory.** All frame buffers are 1-bit: LVGL's display frame (15 KB), two scene canvases and the transition frame (15 KB each), all in internal RAM. LVGL's own allocations (draw tasks, layers, glyph caches) go to PSRAM on the device.
 
 ## On-device frame-pacing benchmark
 
-`esphome/` holds an ESPHome external component (`components/atmos`) that copies the UI sources and `lv_conf.h` from `desktop/` at build time and owns LVGL, plus `atmos-bench.yaml`, which runs the UI on a bare ESP32-S3 (currently a Seeed XIAO ESP32-S3 on COM12) through the real device path: LVGL renders a 1-bit frame, the ST7305 driver rearranges the redrawn rows, then a full SPI push to unconnected pins. No panel is needed. From the project root:
+`esphome/` holds an ESPHome external component (`components/atmos`) that copies the UI sources and `lv_conf.h` from `desktop/` at build time and owns LVGL, plus `atmos-bench.yaml`, which runs the UI on a bare ESP32-S3 (currently a Seeed XIAO ESP32-S3 on COM12) through the real device path: LVGL renders a 1-bit frame, the ST7305 driver rearranges the redrawn rows, then a full SPI push to unconnected pins. No panel is needed. `atmos-rlcd.yaml` runs the same benchmark on the real Waveshare ESP32-S3-RLCD-4.2 panel (on COM3; display pins SCK 11, MOSI 12, CS 40, DC 5, RST 41); select it with `-Config atmos-rlcd.yaml`. From the project root:
 
 ```powershell
 ./esphome/bench.ps1 -Port COM12 -Seconds 120

@@ -1,8 +1,9 @@
-# Build, flash and record the frame-pacing benchmark (atmos-bench.yaml).
+﻿# Build, flash and record the frame-pacing benchmark (atmos-bench.yaml).
 #   ./esphome/bench.ps1 -Port COM12 -Seconds 90           # compile, flash, record
 #   ./esphome/bench.ps1 -Port COM12 -Seconds 90 -NoFlash  # record only
+#   ./esphome/bench.ps1 -Port COM3 -Seconds 120 -Config atmos-rlcd.yaml  # real panel
 # Output: esphome/bench.log (ANSI colour codes stripped).
-param([string]$Port = 'COM12', [int]$Seconds = 90, [switch]$NoFlash)
+param([string]$Port = 'COM12', [int]$Seconds = 90, [switch]$NoFlash, [string]$Config = 'atmos-bench.yaml')
 $ErrorActionPreference = 'Continue'
 $root = Split-Path $PSScriptRoot
 $venv = Join-Path $root '.venv-esphome/Scripts'
@@ -12,7 +13,7 @@ $env:PYTHONIOENCODING = 'utf-8'
 Push-Location $PSScriptRoot
 try {
     if (!$NoFlash) {
-        & (Join-Path $venv 'esphome.exe') run atmos-bench.yaml --device $Port --no-logs *> upload.log
+        & (Join-Path $venv 'esphome.exe') run $Config --device $Port --no-logs *> upload.log
         if ($LASTEXITCODE) {
             Select-String -Path upload.log -Pattern 'error' | Select-Object -First 10 | ForEach-Object Line
             throw "Build or upload failed (see esphome/upload.log)"
@@ -32,3 +33,4 @@ with open('bench.log', 'w', encoding='utf-8') as f:
     & (Join-Path $venv 'python.exe') -c $capture $Port $Seconds
     Write-Output "Recorded $Seconds s to esphome/bench.log"
 } finally { Pop-Location }
+

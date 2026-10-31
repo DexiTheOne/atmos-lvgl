@@ -1,0 +1,53 @@
+﻿# Frame-pacing benchmark on the real Waveshare ESP32-S3-RLCD-4.2 panel.
+# Same as atmos-bench.yaml but with the board's own display pins (Waveshare docs).
+
+esphome:
+  name: atmos-rlcd
+  # Short build path: ESP-IDF object paths exceed Windows' 260-character limit
+  # when long paths are disabled. Also set ESPHOME_ESP_IDF_PREFIX=C:\ESPHome\idf.
+  build_path: C:/ESPHome/build/atmos-rlcd
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+# Waveshare ESP32-S3-RLCD-4.2 display pins.
+spi:
+  clk_pin: GPIO11
+  mosi_pin: GPIO12
+
+display:
+  - platform: st7305_rlcd
+    id: panel
+    model: WAVESHARE_400X300
+    # 40 MHz: reported working on this panel by a community build (artefacts near
+    # 60 MHz); not yet verified on our panel. The driver default is 10 MHz.
+    data_rate: 40MHz
+    cs_pin: GPIO40
+    dc_pin: GPIO5
+    reset_pin: GPIO41
+    auto_clear_enabled: false
+    update_interval: never
+
+atmos:
+  display_id: panel
+  frame_period: 25ms
+  report_interval: 10s
+

@@ -169,3 +169,47 @@ Remaining costs for 30 fps everywhere:
 1. Particles still frames: the flow lines (195 short LVGL line tasks with round caps), particle circles (LVGL arcs) and the per-pixel `atan2`/`hypot` fan.
 2. Overview: the flower's per-pixel petal test (about 19,600 pixels × 6 petals).
 3. Gases: the centre line (160 LVGL line tasks) and particle circles.
+
+## Results: 2026-10-30, first run on the real panel
+
+Hardware: Waveshare ESP32-S3-RLCD-4.2 with its ST7305 panel, on native USB (COM3). It uses the same firmware as the previous run, built from `atmos-rlcd.yaml`: a copy of `atmos-bench.yaml` with the board's display pins, taken from the [Waveshare ESPHome tutorial](https://docs.waveshare.com/ESP32-ESPHome-Tutorials/Example-RLCD-Voice) and the [ESPHome device page](https://devices.esphome.io/devices/waveshare-esp32-s3-rlcd-42/):
+
+| SPI SCK | SPI MOSI | CS | DC | RST |
+|---|---|---|---|---|
+| GPIO11 | GPIO12 | GPIO40 | GPIO5 | GPIO41 |
+
+The community driver's README lists SCK GPIO39 and MOSI GPIO38 instead; the Waveshare pins work. Still no Wi-Fi, API or sensors.
+
+```powershell
+./esphome/bench.ps1 -Port COM3 -Seconds 120 -Config atmos-rlcd.yaml
+```
+
+**40 MHz SPI looks clean on this panel** (checked by eye). This is the first confirmation on our hardware.
+
+| Frames (120 s run) | fps | Frame interval | Late | Render | Convert | SPI push |
+|---|---|---|---|---|---|---|
+| Transitions | **30.2** | avg 33 ms, max 90 ms | 11 of 518 | about 21 ms | 2.5 ms | 3.6 ms |
+| Still scenes | **17.8** (10 s windows 10.6–25.3) | avg 56 ms, max 314 ms | 733 of 1657 | avg 45 ms, max 155 ms | about 1 ms | 3.6 ms |
+
+The `PROFILE` line matches the previous section (still frames 70.9 / 25.9 / 115.0 / 69.3 / 24.8 ms for Overview / CO2 / Particles / Gases / Climate). The panel itself adds no cost.
+
+- **Drawing is the limit, not SPI.** Convert plus push is about 6 ms. Going above 40 MHz (artefacts are reported near 60 MHz) would save about 1 ms per frame, so it isn't worth the risk.
+- **The longest frames are hold-time pre-render steps** (60–150 ms each, plus the still frame). One reached 314 ms and triggered ESPHome's "took a long time" warning. Since 1,847 model steps were missed, motion runs slower than real time rather than skipping frames.
+- **Memory:** about 290 KB internal heap free (largest block 237 KB), about 8 MB PSRAM free.
+
+### Experiment: animating artwork during transitions (reverted)
+
+Each transition frame redrew both scenes' animated boxes into the snapshot canvases at the live time, then composed as usual. The ends still met the live scenes exactly, and the simulator self-test passed. On the panel:
+
+| | Still artwork (kept) | Live artwork (tried) |
+|---|---|---|
+| Transition fps | 30.2 | **9.7** |
+| Frame interval | avg 33 ms, max 90 ms | avg 103 ms, max 256 ms |
+| Late frames | 11 of 518 | **181 of 181** |
+| Transition frame cost | 25–31 ms | 75–150 ms |
+
+Each frame pays for two artwork redraws (about one still frame of each scene, since the artwork functions do their full per-frame work even when clipped) on top of the roughly 20 ms compositor. Transitions involving Particles were the worst, at about 150 ms. The change was reverted: transitions keep still snapshots. Live artwork is only affordable once each scene's artwork costs a few milliseconds, which is the same work that would bring still scenes toward 40 fps.
+
+### Expected effect of Wi-Fi, Home Assistant and sensors (not yet measured)
+
+Wi-Fi runs mostly on core 0 while the UI loop runs on core 1. API traffic and periodic I²C sensor reads are light, so the average frame rate should change little. The risks are jitter from sensor drivers that block in the loop and brief PSRAM/flash bus contention. Conversely, our 150–300 ms frames delay network and sensor handling. Measure by adding `wifi:`, `api:` and the sensor to `atmos-rlcd.yaml` and repeating the 120 s run.
