@@ -56,5 +56,5 @@ display:
 
 atmos:
   display_id: panel
-  frame_period: 25ms
+  frame_period: 59ms  # about 17 fps cap
   report_interval: 10s

@@ -473,13 +473,13 @@ int main(int argc,char **argv){
         atmos_step(elapsed/1000.0);
         if(!hw_pace){lv_timer_handler();Sleep(2);continue;}
         /* One device frame: step, render, then hold for the device's cost of that frame
-           (never less than the 25 ms step period). */
+           (never less than the device's 59 ms frame period, its 17 fps cap). */
         int pre=atmos_step_prerendered();
         lv_refr_now(display);
         double cost=atmos_is_moving()?hw_trans_ms[atmos_scene()]:hw_still_ms[atmos_scene()];
         if(pre>=0)cost+=hw_prerender_ms[pre];
         cost+=hw_loop_ms;
-        next_frame=now+(cost>25?cost:25);
+        next_frame=now+(cost>59?cost:59);
     }
     window=NULL;lv_deinit();return 0;
 }

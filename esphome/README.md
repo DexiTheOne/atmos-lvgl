@@ -232,3 +232,19 @@ Firmware from commit `059bed1`: each page exits through its own effect (CO2 bubb
 - Still scenes average about 26 fps across the run (late frames come mostly from Particles and pre-render steps; maximum frame 130 ms).
 - Memory: about 284 KB internal heap free (largest block 229 KB), about 8 MB PSRAM free.
 - `hw_*_ms` in `desktop/main_win32.c` now hold these figures.
+
+## Results: 2026-11-01, frame-rate cap
+
+The component no longer spins the main loop (`HighFrequencyLoopRequester` is gone). Each frame runs from a scheduler timeout set for the next frame period, so the loop task sleeps until the next frame is due and never draws faster than the cap (`frame_period`). The report line now shows the CPU share spent drawing ("UI busy"). Real panel, 120 s each:
+
+| Cap | Still fps | Transition fps | Late frames | Max frame interval | Missed model steps | UI busy |
+|---|---|---|---|---|---|---|
+| none (25 ms steps, busy loop) | 26 | 26 | 370 of 1323 at 37.5 ms | 130 ms | 1067 | about 100% |
+| 30 fps (33.3 ms) | 26 | 26 | 309 of 2890 at 50 ms | 133 ms | 262 | 93–98% |
+| 20 fps (50 ms) | 19.8 | 19.1 | 42 of 2170 at 75 ms | 138 ms | 36 | 67–78% |
+| **17 fps (59 ms), default** | 16.9 | 16.8 | **32 of 1862** at 88.5 ms | 147 ms | **9** | **58–67%** |
+
+- At 30 fps most frames cost close to the period, so the cap frees almost no CPU.
+- At 20 fps pacing is even: only ribbons swell (about 64 ms) and pre-render steps run over, and about a quarter of the CPU is left for Wi-Fi, the API and sensors.
+- At 17 fps (the default) only pre-render steps run over, and about a third to two-fifths of the CPU is left.
+- `--hw-pace` in the simulator now holds every frame for at least 59 ms.

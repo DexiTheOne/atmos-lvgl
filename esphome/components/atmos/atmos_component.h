@@ -10,7 +10,7 @@ namespace esphome::atmos {
 /* Frame statistics for one class of frames (still scenes or transitions). */
 struct FrameStats {
   uint32_t frames{0};
-  uint32_t late{0};  // presentation interval > 1.5 frame periods (a dropped 40 fps slot)
+  uint32_t late{0};  // presentation interval > 1.5 frame periods (a dropped frame slot)
   uint64_t interval_sum{0};
   uint32_t interval_max{0};
   uint64_t render_sum{0}, convert_sum{0}, push_sum{0};
@@ -29,24 +29,25 @@ class AtmosComponent : public Component {
   void set_report_interval_ms(uint32_t ms) { this->report_ms_ = ms; }
   float get_setup_priority() const override { return setup_priority::PROCESSOR; }
   void setup() override;
-  void loop() override;
   void dump_config() override;
 
  protected:
   static void flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map);
   static void display_event_(lv_event_t *e);
   void on_display_event_(lv_event_code_t code);
+  void frame_();
   void report_();
 
   st7305_rlcd::ST7305RLCD *panel_{nullptr};
   lv_display_t *disp_{nullptr};
-  uint32_t period_us_{25000};
+  uint32_t period_us_{59000};
   uint32_t report_ms_{10000};
   bool started_{false};
   uint32_t next_step_us_{0};
   uint32_t last_report_ms_{0};
   uint32_t missed_steps_{0};
-  HighFrequencyLoopRequester high_freq_;
+  uint64_t busy_us_{0};  // time spent in frame_() since the last report
+  uint32_t report_start_ms_{0};
 
   // Per-frame timing (micros()).
   uint32_t frame_start_{0}, last_present_{0};

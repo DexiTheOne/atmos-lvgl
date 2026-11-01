@@ -34,8 +34,9 @@ CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(AtmosComponent),
         cv.Required(CONF_DISPLAY_ID): cv.use_id(ST7305RLCD),
-        # Model step cadence. 25 ms = 40 fps target.
-        cv.Optional(CONF_FRAME_PERIOD, default="25ms"): cv.positive_time_period_microseconds,
+        # Frame period and frame-rate cap: 59 ms = about 17 fps, which nearly every frame meets,
+        # leaving about a quarter of the CPU idle for Wi-Fi, the API and sensors.
+        cv.Optional(CONF_FRAME_PERIOD, default="59ms"): cv.positive_time_period_microseconds,
         cv.Optional(CONF_REPORT_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
     }
 ).extend(cv.COMPONENT_SCHEMA)

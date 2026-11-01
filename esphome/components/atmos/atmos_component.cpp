@@ -55,6 +55,8 @@ void AtmosComponent::setup() {
   lv_display_set_user_data(this->disp_, this);
   for (auto code : {LV_EVENT_REFR_START, LV_EVENT_REFR_READY})
     lv_display_add_event_cb(this->disp_, display_event_, code, this);
+  this->report_start_ms_ = millis();
+  this->set_timeout("frame", 0, [this]() { this->frame_(); });
 }
 
 void AtmosComponent::dump_config() {
@@ -116,12 +118,14 @@ void AtmosComponent::on_display_event_(lv_event_code_t code) {
     this->current_transition_.add(interval, this->render_us_, this->convert_us_, this->push_us_, this->period_us_);
 }
 
-void AtmosComponent::loop() {
+/* Frames are driven by a scheduler timeout rather than loop(): the main loop task sleeps
+   until the next frame is due, so Wi-Fi, the API and sensors get the CPU between frames
+   and a frame never starts earlier than its period (the frame-rate cap). */
+void AtmosComponent::frame_() {
   uint32_t now = micros();
   if (!this->started_) {
     atmos_init();
     atmos_set_clock([]() -> uint32_t { return micros(); });
-    this->high_freq_.start();
     this->started_ = true;
     this->next_step_us_ = now;
     this->last_report_ms_ = millis();
@@ -130,7 +134,7 @@ void AtmosComponent::loop() {
              (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
   }
   // Fixed-cadence model steps: one step per frame period. A step that is a full period
-  // late means a 40 fps slot was missed; the model then advances by the real elapsed time.
+  // late means a frame slot was missed; the model then advances by the real elapsed time.
   if ((int32_t) (now - this->next_step_us_) >= 0) {
     uint32_t late = now - this->next_step_us_;
     uint32_t steps = 1 + late / this->period_us_;
@@ -143,6 +147,7 @@ void AtmosComponent::loop() {
       this->pre_n_[pre]++;
     }
     this->next_step_us_ += steps * this->period_us_;
+    lv_refr_now(this->disp_);  // render now, not on LVGL's own refresh timer
   }
   lv_timer_handler();
   bool moving = atmos_is_moving();
@@ -158,10 +163,18 @@ void AtmosComponent::loop() {
     this->last_report_ms_ = millis();
     this->report_();
   }
+  uint32_t done = micros();
+  this->busy_us_ += done - now;
+  int32_t wait = (int32_t) (this->next_step_us_ - done);
+  this->set_timeout("frame", wait > 0 ? (wait + 999) / 1000 : 0, [this]() { this->frame_(); });
 }
 
 void AtmosComponent::report_() {
-  ESP_LOGI(TAG, "---- last %u s ----", (unsigned) (this->report_ms_ / 1000));
+  uint32_t now_ms = millis();
+  ESP_LOGI(TAG, "---- last %u s ----  UI busy %.0f%% of CPU (frame cap %.1f fps)", (unsigned) (this->report_ms_ / 1000),
+           this->busy_us_ / 10.0f / std::max<uint32_t>(1, now_ms - this->report_start_ms_), 1e6f / this->period_us_);
+  this->busy_us_ = 0;
+  this->report_start_ms_ = now_ms;
   this->window_still_.log("still", this->period_us_);
   this->window_transition_.log("transition", this->period_us_);
   this->still_.log("still tot", this->period_us_);
