@@ -215,3 +215,20 @@ Each frame pays for two artwork redraws (about one still frame of each scene, si
 ### Expected effect of Wi-Fi, Home Assistant and sensors (not yet measured)
 
 Wi-Fi runs mostly on core 0 while the UI loop runs on core 1. API traffic and periodic I²C sensor reads are light, so the average frame rate should change little. The risks are jitter from sensor drivers that block in the loop and brief PSRAM/flash bus contention. Conversely, our 150–300 ms frames delay network and sensor handling. Measure by adding `wifi:`, `api:` and the sensor to `atmos-rlcd.yaml` and repeating the 120 s run.
+
+## Results: 2026-11-01, transitions chosen by the page being left
+
+Firmware from commit `059bed1`: each page exits through its own effect (CO2 bubble portal, Particles dust bloom, Gases ribbons swell, Climate droplet fall, Formaldehyde atom portal). Real panel, `atmos-rlcd.yaml`, 120 s automatic cycling (the Overview is out of the cycle, so its column keeps the earlier figures).
+
+| | CO2 | Particles | Gases | Climate | Formaldehyde |
+|---|---|---|---|---|---|
+| Effect when leaving | bubble portal | dust bloom | ribbons swell | droplet fall | atom portal |
+| Transition frame (ms) | 27.7 | 36.5 | **63.6** | 19.4 | 21.9 |
+| Transition fps | 30.4 | 24 | **15.5** | 30.7 | 30.5 |
+| Still frame (ms) | 33.4 | 46.4 | 31.2 | 29.0 | 37.5 |
+| Pre-render step (ms) | 38.3 | 57.0 | 55.4 | 33.5 | 41.9 |
+
+- **Ribbons swell is the slow one:** about 57 ms of render per frame, so every frame is late (15.5 fps). Dust bloom misses 40 fps on about 40% of frames (24 fps). Bubble portal, droplet fall and atom portal hold about 30 fps with no late frames.
+- Still scenes average about 26 fps across the run (late frames come mostly from Particles and pre-render steps; maximum frame 130 ms).
+- Memory: about 284 KB internal heap free (largest block 229 KB), about 8 MB PSRAM free.
+- `hw_*_ms` in `desktop/main_win32.c` now hold these figures.

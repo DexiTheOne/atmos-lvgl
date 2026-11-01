@@ -31,9 +31,9 @@ static HWND window;
    (frame interval minus frame work, averaged over the run). */
 static bool hw_pace;
 /* Formaldehyde (last entry) is not yet measured: the CO2 page's costs stand in. */
-static const double hw_still_ms[ATMOS_SCENES]={70.9,26.4,116.0,70.1,25.2,26.4};
-static const double hw_trans_ms[ATMOS_SCENES]={26.0,27.8,28.2,31.0,25.9,27.8};
-static const double hw_prerender_ms[ATMOS_SCENES]={71.8,62.2,151.8,96.9,62.0,62.2};
+static const double hw_still_ms[ATMOS_SCENES]={70.9,33.4,46.4,31.2,29.0,37.5};
+static const double hw_trans_ms[ATMOS_SCENES]={26.0,27.7,36.5,63.6,19.4,21.9};
+static const double hw_prerender_ms[ATMOS_SCENES]={71.8,38.3,57.0,55.4,33.5,41.9};
 static const double hw_loop_ms=4.0;
 static void update_title(void);
 static unsigned flushes,transitions_checked;
