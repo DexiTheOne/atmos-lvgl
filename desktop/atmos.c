@@ -94,6 +94,13 @@ static float duration=1.4f;
 /* Portal anchor in Q8 pixels. */
 static int32_t portal_x=UI_FLOWER_X<<8, portal_y=UI_FLOWER_Y<<8, portal_radius=25<<8;
 static int portal_bubble=-1;
+/* Artwork recorded by the latest draw of each scene. Transitions take their anchors
+   from it right after rasterising the incoming snapshot. */
+static int16_t pm_dust[UI_PM_PARTICLE_MAX][3]; /* x, y, radius */
+static int pm_dust_count;
+static float hcho_atoms[UI_HCHO_MOLECULES][3]; /* oxygen x, y, radius */
+static int hcho_atom_count;
+static float gas_ribbon_top;
 static float clamp(float v,float lo,float hi){return v<lo?lo:v>hi?hi:v;}
 static float ease(float v){v=clamp(v,0,1);return v*v*(3-2*v);}
 static float mix(float a,float b,float p){return a+(b-a)*p;}
@@ -765,6 +772,7 @@ static void pm_particle_field(void){
     /* Drift advances in whole ticks, so the scene redraws only UI_PM_FIELD_FPS times a second. */
     int64_t tick=(int64_t)floor(anim_t*UI_PM_FIELD_FPS);
     float f=PM_FOCAL;
+    pm_dust_count=0;
     for(int j=0;j<UI_PM_PARTICLE_MAX;j++){
         /* Deterministic admission thresholds prevent random per-frame flicker. */
         if(j+.5f>pm_density)break;
@@ -787,6 +795,8 @@ static void pm_particle_field(void){
         sx=LV_CLAMP(UI_PM_FIELD_LEFT+ri,sx,UI_PM_FIELD_RIGHT-ri);
         sy=LV_CLAMP(UI_PM_FIELD_TOP+ri,sy,UI_PM_FIELD_BOTTOM-ri);
         pm_dot(sx,sy,r);
+        pm_dust[pm_dust_count][0]=(int16_t)sx;pm_dust[pm_dust_count][1]=(int16_t)sy;
+        pm_dust[pm_dust_count++][2]=(int16_t)lroundf(r);
     }
 }
 static void pm_history_chart(void){
@@ -980,6 +990,9 @@ static void hcho_molecule(float x,float y,float angle,float bond,float scale){
     segment(x,y,ox,oy,half,half);
     for(int k=0;k<2;k++)segment(x,y,hx[k],hy[k],half,half);
     disc((int)lroundf(ox),(int)lroundf(oy),.36f*l,false);
+    if(hcho_atom_count<UI_HCHO_MOLECULES){
+        hcho_atoms[hcho_atom_count][0]=ox;hcho_atoms[hcho_atom_count][1]=oy;hcho_atoms[hcho_atom_count++][2]=.36f*l;
+    }
     float stroke=big?2.0f:1.5f;
     hcho_ring((int)lroundf(x),(int)lroundf(y),.3f*l,stroke);
     for(int k=0;k<2;k++)hcho_ring((int)lroundf(hx[k]),(int)lroundf(hy[k]),.22f*l,stroke);
@@ -987,6 +1000,7 @@ static void hcho_molecule(float x,float y,float angle,float bond,float scale){
 static void hcho_molecules(void){
     lv_area_t clip=layer->_clip_area;
     int left=hcho_field_left();
+    hcho_atom_count=0;
     layer->_clip_area=(lv_area_t){LV_MAX(clip.x1,left),LV_MAX(clip.y1,UI_HCHO_FIELD_TOP),
         LV_MIN(clip.x2,UI_HCHO_FIELD_RIGHT-1),LV_MIN(clip.y2,UI_HCHO_FIELD_BOTTOM-1)};
     for(int j=0;j<UI_HCHO_MOLECULES;j++){
@@ -1140,6 +1154,7 @@ static void gas_ribbons(void){
         low=fmax(low,wave[x-left]+half[1]*taper[x-left]);
     }
     float ribbon_top=content_center()-UI_GAS_RIBBON_GAP-(high+low)/2;
+    gas_ribbon_top=ribbon_top;
     for(int lane=0;lane<3;lane++){
         float center=ribbon_top+lane*UI_GAS_RIBBON_GAP;
         for(int x=left;x<=right;x++){
@@ -1221,30 +1236,8 @@ static void draw_scene(int which){
         case 2:draw_pm_detail();break;case 3:draw_gas_detail();break;case 4:draw_climate_detail();break;default:draw_hcho_detail();break;}
 }
 /* Fixed-point transition maths: Q16 progress/scale, Q8 screen positions,
-   angles as Q16 fractions of a turn, sines in Q14. No floating point per pixel. */
+   one exact integer square root per circle per row. No floating point per pixel. */
 #define FX 65536
-static const int16_t sine_table[257]={
-0,402,804,1205,1606,2006,2404,2801,3196,3590,3981,4370,4756,5139,5520,5897,
-6270,6639,7005,7366,7723,8076,8423,8765,9102,9434,9760,10080,10394,10702,11003,11297,
-11585,11866,12140,12406,12665,12916,13160,13395,13623,13842,14053,14256,14449,14635,14811,14978,
-15137,15286,15426,15557,15679,15791,15893,15986,16069,16143,16207,16261,16305,16340,16364,16379,
-16384,16379,16364,16340,16305,16261,16207,16143,16069,15986,15893,15791,15679,15557,15426,15286,
-15137,14978,14811,14635,14449,14256,14053,13842,13623,13395,13160,12916,12665,12406,12140,11866,
-11585,11297,11003,10702,10394,10080,9760,9434,9102,8765,8423,8076,7723,7366,7005,6639,
-6270,5897,5520,5139,4756,4370,3981,3590,3196,2801,2404,2006,1606,1205,804,402,
-0,-402,-804,-1205,-1606,-2006,-2404,-2801,-3196,-3590,-3981,-4370,-4756,-5139,-5520,-5897,
--6270,-6639,-7005,-7366,-7723,-8076,-8423,-8765,-9102,-9434,-9760,-10080,-10394,-10702,-11003,-11297,
--11585,-11866,-12140,-12406,-12665,-12916,-13160,-13395,-13623,-13842,-14053,-14256,-14449,-14635,-14811,-14978,
--15137,-15286,-15426,-15557,-15679,-15791,-15893,-15986,-16069,-16143,-16207,-16261,-16305,-16340,-16364,-16379,
--16384,-16379,-16364,-16340,-16305,-16261,-16207,-16143,-16069,-15986,-15893,-15791,-15679,-15557,-15426,-15286,
--15137,-14978,-14811,-14635,-14449,-14256,-14053,-13842,-13623,-13395,-13160,-12916,-12665,-12406,-12140,-11866,
--11585,-11297,-11003,-10702,-10394,-10080,-9760,-9434,-9102,-8765,-8423,-8076,-7723,-7366,-7005,-6639,
--6270,-5897,-5520,-5139,-4756,-4370,-3981,-3590,-3196,-2801,-2404,-2006,-1606,-1205,-804,-402,
-0};
-static int32_t fx_sin(int32_t turn){
-    uint32_t u=(uint32_t)turn;int i=(u>>8)&255,f=u&255;
-    return sine_table[i]+(((sine_table[i+1]-sine_table[i])*f)>>8);
-}
 static int32_t fx_ease(int32_t p){
     if(p<=0)return 0;
     if(p>=FX)return FX;
@@ -1256,29 +1249,36 @@ static bool bit_at(const uint8_t *bits,int x,int y){
     return bits[y*ROW_BYTES+(x>>3)]>>(7-(x&7))&1;
 }
 static void put_bit(uint8_t *bits,int x,int y,bool paper){
+    if((unsigned)x>=UI_WIDTH || (unsigned)y>=UI_HEIGHT)return;
     uint8_t mask=(uint8_t)(0x80>>(x&7));uint8_t *b=&bits[y*ROW_BYTES+(x>>3)];
     *b=paper?(uint8_t)(*b|mask):(uint8_t)(*b&~mask);
 }
-static bool is_portal(int from,int to){return from==0 || to==0 || (from==1 && to==2) || (from==2 && to==1);}
-static void select_portal(int from,int to){
+/* Transitions are chosen by the page being left: each page opens onto the next through
+   its own artwork, so any page can be reached from any other. */
+enum{EFFECT_PORTAL,EFFECT_DUST,EFFECT_RIBBONS,EFFECT_DROPLET,EFFECT_ATOM};
+static int transition_effect(int from){
+    static const int effects[ATMOS_SCENES]={EFFECT_PORTAL,EFFECT_PORTAL,EFFECT_DUST,EFFECT_RIBBONS,EFFECT_DROPLET,EFFECT_ATOM};
+    return effects[from];
+}
+/* The overview zooms into its status circle; CO2 into one of its visible bubbles. */
+static void select_portal(int from){
     portal_x=UI_FLOWER_X<<8;portal_y=UI_FLOWER_Y<<8;portal_radius=25<<8;
-    if(from==0 || to==0)return;
-    if((from==1 && to==2) || (from==2 && to==1)){
-        /* Select an actual visible bubble; keep that one anchored during travel. */
-        int best=-1;
-        for(int j=0;j<UI_BUBBLE_COUNT;j++){
-            if(!co2_bubble_visible(j))continue;
-            float x,y;co2_bubble_position(j,&x,&y);int r=co2_bubble_radius(j);
-            if(y-r>=UI_BUBBLE_TOP && y+r<=UI_BUBBLE_BOTTOM && r>best){
-                best=r;portal_x=(int32_t)lround(x*256);portal_y=(int32_t)lround(y*256);portal_radius=r<<8;
-            }
+    if(from!=1)return;
+    int best=-1;
+    for(int j=0;j<UI_BUBBLE_COUNT;j++){
+        if(!co2_bubble_visible(j))continue;
+        float x,y;co2_bubble_position(j,&x,&y);int r=co2_bubble_radius(j);
+        if(y-r>=UI_BUBBLE_TOP && y+r<=UI_BUBBLE_BOTTOM && r>best){
+            best=r;portal_x=(int32_t)lround(x*256);portal_y=(int32_t)lround(y*256);portal_radius=r<<8;
         }
     }
 }
 /* Reference compositors (the original per-pixel versions). The self-test requires
    the fast versions below to match them bit for bit. */
 static void compose_portal_ref(int from,int to,int32_t progress){
-    bool reverse=to==0 || (from==2 && to==1);
+    (void)to;
+    /* The portal page is the one being left: zoom into its symbol. */
+    bool reverse=false;
     int32_t q=fx_ease(reverse?FX-progress:progress);
     const uint8_t *outer=SCENE_BITS(reverse?1:0),*inner=SCENE_BITS(reverse?0:1);
     int32_t cx=portal_x+(int32_t)(((int64_t)((200<<8)-portal_x)*q)>>16);
@@ -1289,7 +1289,7 @@ static void compose_portal_ref(int from,int to,int32_t progress){
     /* Reveal begins inside the selected symbol, then opens to all four corners. */
     int32_t opening=fx_ease((int32_t)((int64_t)(q-FX*8/100)*100/92));
     int64_t radius=((int64_t)opening*430)>>8,radius2=radius*radius;
-    bool ring_on=from!=0 && to!=0 && q>0 && q<FX;
+    bool ring_on=from==1 && q>0 && q<FX;
     int64_t ring=((int64_t)portal_radius*zoom)>>16,ring_in=ring-((2*zoom)>>8);
     int64_t ring2=ring*ring,ring_in2=ring_in*ring_in;
     for(int y=0;y<UI_HEIGHT;y++){
@@ -1303,35 +1303,6 @@ static void compose_portal_ref(int from,int to,int32_t progress){
             else p=bit_at(outer,fx_round8(portal_x+((dx*inv_zoom)>>16)),outer_y);
             /* Carry the bubble's own outline outwards instead of introducing a cut. */
             if(ring_on && !inside && rr<ring2 && rr>ring_in2)p=false;
-            put_bit(transition_bits,x,y,p);
-        }
-    }
-}
-static void compose_sweep_ref(int from,int to,int32_t progress){
-    /* The horizontal gas ribbons travel vertically: enter downward, exit upward. */
-    bool vertical=from==3 || to==3;
-    bool reverse=vertical?from==3:to<from;
-    bool airflow=!vertical && (from==2 || to==2);
-    int32_t q=fx_ease(progress),envelope=fx_sin(q/2);
-    int along=vertical?UI_HEIGHT:UI_WIDTH,cross=vertical?UI_WIDTH:UI_HEIGHT;
-    int32_t spatial=airflow?261:177; /* .025 / .017 rad per pixel, in Q16 turns */
-    int32_t phase=(int32_t)((int64_t)q*65/100),amplitude=airflow?32:72;
-    int32_t edge_base=-100*256+(int32_t)(((int64_t)(along+200)*q)>>8);
-    int32_t band=((airflow?4:14)*envelope)>>6;
-    int sign=reverse?-1:1;
-    int drift_in=(int)((28LL*(FX-q)+FX/2)>>16)*sign,drift_out=-(int)((28LL*q+FX/2)>>16)*sign;
-    for(int c=0;c<cross;c++){
-        int32_t wave=fx_sin((c-226)*spatial-phase);
-        int32_t edge=edge_base+(int32_t)(((int64_t)((wave*amplitude)>>6)*envelope)>>14);
-        for(int a=0;a<along;a++){
-            int x=vertical?c:a,y=vertical?a:c;
-            int32_t travel=(reverse?along-1-a:a)<<8;
-            bool incoming=travel<edge;
-            int drift=incoming?drift_in:drift_out;
-            bool p=bit_at(SCENE_BITS(incoming?1:0),x+(vertical?0:drift),y+(vertical?drift:0));
-            int32_t distance=travel>edge?travel-edge:edge-travel;
-            /* One continuous seam, without decorative cross stitches. */
-            if(distance<band)p=distance<358;
             put_bit(transition_bits,x,y,p);
         }
     }
@@ -1360,7 +1331,9 @@ static void circle_span(int64_t limit,int32_t cx,int *lo,int *hi){
     *lo=(int)LV_MAX(first,-1);*hi=(int)LV_MIN(last,UI_WIDTH);
 }
 static void compose_portal(int from,int to,int32_t progress){
-    bool reverse=to==0 || (from==2 && to==1);
+    (void)to;
+    /* The portal page is the one being left: zoom into its symbol. */
+    bool reverse=false;
     int32_t q=fx_ease(reverse?FX-progress:progress);
     const uint8_t *outer=SCENE_BITS(reverse?1:0),*inner=SCENE_BITS(reverse?0:1);
     int32_t cx=portal_x+(int32_t)(((int64_t)((200<<8)-portal_x)*q)>>16);
@@ -1370,7 +1343,7 @@ static void compose_portal(int from,int to,int32_t progress){
     int64_t inv_zoom=((int64_t)FX<<16)/zoom,inv_arrival=((int64_t)FX<<16)/arrival;
     int32_t opening=fx_ease((int32_t)((int64_t)(q-FX*8/100)*100/92));
     int64_t radius=((int64_t)opening*430)>>8,radius2=opening>0?radius*radius:-1;
-    bool ring_on=from!=0 && to!=0 && q>0 && q<FX;
+    bool ring_on=from==1 && q>0 && q<FX;
     int64_t ring=((int64_t)portal_radius*zoom)>>16,ring_in=ring-((2*zoom)>>8);
     int64_t ring2=ring*ring,ring_in2=ring_in*ring_in;
     /* The horizontal source position depends only on x: one table per frame.
@@ -1415,71 +1388,202 @@ static void compose_portal(int from,int to,int32_t progress){
         }
     }
 }
-/* 8 pixels of a 1-bit row starting at column x (any x); outside the row is paper. */
-static inline uint8_t row_byte_at(const uint8_t *row,int x){
-    if(!row)return 0xff;
-    if(x>=0 && x+7<UI_WIDTH && (x&7)==0)return row[x>>3];
-    unsigned v=0;
-    for(int k=0;k<8;k++){
-        int xx=x+k;
-        v=v<<1|((unsigned)xx>=UI_WIDTH?1u:(unsigned)(row[xx>>3]>>(7-(xx&7))&1));
+/* Effect anchors, taken from the incoming snapshot by prepare_effect(). Q8 pixels. */
+#define BLOOM_MAX 32
+typedef struct{int32_t x,y,radius,delay;} bloom_t;
+static bloom_t blooms[BLOOM_MAX];
+static int bloom_count;
+static int32_t ribbon_wave[UI_WIDTH],ribbon_top;
+static int drop_x,drop_top,drop_base;
+static int16_t drop_half[UI_CLIMATE_DROP_HEIGHT];
+static int32_t drop_reach,atom_x,atom_y,atom_reach;
+/* Distance from (x, y) to the farthest frame corner, plus a margin, in Q8. */
+static int32_t farthest_corner(float x,float y){
+    float dx=fmaxf(x,UI_WIDTH-x),dy=fmaxf(y,UI_HEIGHT-y);
+    return (int32_t)(sqrtf(dx*dx+dy*dy)*256)+(4<<8);
+}
+/* Called right after the outgoing scene is rasterised (anim_t still at its snapshot
+   time), so anchors match the artwork the transition opens through. */
+static void prepare_effect(int from){
+    switch(transition_effect(from)){
+    case EFFECT_PORTAL:select_portal(from);break;
+    case EFFECT_DUST:{
+        /* The page's largest specks bloom first, then a jittered grid seeds
+           blooms across the frame, later with distance from the field, so the
+           blooms always cover the frame by the end. */
+        int order[UI_PM_PARTICLE_MAX];
+        for(int i=0;i<pm_dust_count;i++){
+            int j=i;
+            while(j>0 && pm_dust[order[j-1]][2]<pm_dust[i][2]){order[j]=order[j-1];j--;}
+            order[j]=i;
+        }
+        bloom_count=0;
+        for(int i=0;i<LV_MIN(pm_dust_count,10);i++){
+            const int16_t *d=pm_dust[order[i]];
+            blooms[bloom_count++]=(bloom_t){d[0]<<8,d[1]<<8,70<<8,FX*3*i/100};
+        }
+        const float fx=UI_PM_FIELD_CX,fy=(UI_PM_FIELD_TOP+UI_PM_FIELD_BOTTOM)/2.0f;
+        for(int r=0;r<4;r++)for(int c=0;c<5;c++){
+            int x=40+80*c+(r*7+c*13)%25-12,y=37+75*r+(r*11+c*5)%25-12;
+            float distance=hypotf(x-fx,y-fy);
+            int32_t delay=FX*15/100+(int32_t)(FX*.3f*fminf(distance/450.0f,1));
+            blooms[bloom_count++]=(bloom_t){x<<8,y<<8,80<<8,delay};
+        }
+    }break;
+    case EFFECT_RIBBONS:
+        ribbon_top=(int32_t)lroundf(gas_ribbon_top*256);
+        for(int x=0;x<UI_WIDTH;x++){
+            float u=(float)(x-UI_GAS_RIBBON_LEFT)/(UI_GAS_RIBBON_RIGHT-UI_GAS_RIBBON_LEFT);
+            ribbon_wave[x]=(int32_t)lroundf(gas_wave(u)*256);
+        }
+        break;
+    case EFFECT_DROPLET:{
+        /* The humidity icon's droplet outline: a round base with straight sides to the tip. */
+        climate_layout_t l=climate_layout();
+        int height=UI_CLIMATE_DROP_HEIGHT-1,r=UI_CLIMATE_DROP_RADIUS;
+        float base=height-r+.5f,tangent=base-r*r/base,slope=r/sqrtf(base*base-r*r);
+        for(int yy=0;yy<=height;yy++){
+            float half=yy<tangent?yy*slope:sqrtf(fmaxf(0,(r+.5f)*(r+.5f)-(yy-base)*(yy-base)));
+            drop_half[yy]=(int16_t)lroundf(half);
+        }
+        drop_x=l.icon_x;drop_top=l.row_center[1]-UI_CLIMATE_DROP_HEIGHT/2;drop_base=drop_top+(int)lroundf(base);
+        drop_reach=farthest_corner(drop_x,drop_base);
+    }break;
+    case EFFECT_ATOM:{
+        /* The largest molecule's oxygen; the field centre if none is shown. */
+        float x=(hcho_field_left()+UI_HCHO_FIELD_RIGHT)/2.0f,y=(UI_HCHO_FIELD_TOP+UI_HCHO_FIELD_BOTTOM)/2.0f,best=-1;
+        for(int i=0;i<hcho_atom_count;i++)
+            if(hcho_atoms[i][2]>best){best=hcho_atoms[i][2];x=hcho_atoms[i][0];y=hcho_atoms[i][1];}
+        atom_x=(int32_t)lroundf(x*256);atom_y=(int32_t)lroundf(y*256);atom_reach=farthest_corner(x,y);
+    }break;
     }
-    return (uint8_t)v;
 }
-static inline uint8_t row_byte_shifted(const uint8_t *row,int x){
-    if(!row)return 0xff;
-    if(x<0 || x+7>=UI_WIDTH)return row_byte_at(row,x);
-    int b=x>>3,s=x&7;
-    if(!s)return row[b];
-    return (uint8_t)((row[b]<<s)|(row[b+1]>>(8-s)));
+/* Mask compositors: each output row is first coded per column (outgoing, incoming,
+   ink or paper), then assembled a byte at a time. */
+enum{CODE_OUT,CODE_IN,CODE_INK,CODE_PAPER};
+static uint8_t row_code[UI_WIDTH];
+static void code_span(int lo,int hi,uint8_t code){
+    lo=LV_MAX(lo,0);hi=LV_MIN(hi,UI_WIDTH-1);
+    if(lo<=hi)memset(row_code+lo,code,(size_t)(hi-lo+1));
 }
-static void compose_sweep(int from,int to,int32_t progress){
-    /* The horizontal gas ribbons travel vertically: enter downward, exit upward. */
-    bool vertical=from==3 || to==3;
-    bool reverse=vertical?from==3:to<from;
-    bool airflow=!vertical && (from==2 || to==2);
-    int32_t q=fx_ease(progress),envelope=fx_sin(q/2);
-    int along=vertical?UI_HEIGHT:UI_WIDTH,cross=vertical?UI_WIDTH:UI_HEIGHT;
-    int32_t spatial=airflow?261:177; /* .025 / .017 rad per pixel, in Q16 turns */
-    int32_t phase=(int32_t)((int64_t)q*65/100),amplitude=airflow?32:72;
-    int32_t edge_base=-100*256+(int32_t)(((int64_t)(along+200)*q)>>8);
-    int32_t band=((airflow?4:14)*envelope)>>6;
-    int sign=reverse?-1:1;
-    int drift_in=(int)((28LL*(FX-q)+FX/2)>>16)*sign,drift_out=-(int)((28LL*q+FX/2)>>16)*sign;
-    static int32_t edge_at[UI_WIDTH>UI_HEIGHT?UI_WIDTH:UI_HEIGHT];
-    for(int c=0;c<cross;c++){
-        int32_t wave=fx_sin((c-226)*spatial-phase);
-        edge_at[c]=edge_base+(int32_t)(((int64_t)((wave*amplitude)>>6)*envelope)>>14);
+/* Columns of row y inside a circle (centre and radius in Q8). */
+static void code_disc(int y,int32_t cx,int32_t cy,int32_t radius,uint8_t code){
+    if(radius<=0)return;
+    int64_t dy=((int64_t)y<<8)-cy,limit=(int64_t)radius*radius-dy*dy;
+    int lo,hi;circle_span(limit,cx,&lo,&hi);code_span(lo,hi,code);
+}
+static void emit_row(int y){
+    const uint8_t *in=SCENE_BITS(1)+y*ROW_BYTES,*out=SCENE_BITS(0)+y*ROW_BYTES;
+    uint8_t *o=transition_bits+y*ROW_BYTES;
+    for(int xb=0;xb<ROW_BYTES;xb++){
+        unsigned incoming=0,keep=0,paper=0;
+        for(int k=0;k<8;k++){
+            unsigned c=row_code[xb*8+k];
+            incoming=incoming<<1|(c==CODE_IN);keep=keep<<1|(c==CODE_OUT);paper=paper<<1|(c==CODE_PAPER);
+        }
+        o[xb]=(uint8_t)((in[xb]&incoming)|(out[xb]&keep)|paper);
+    }
+}
+/* Eased progress through the window [start, start+length) of the transition. */
+static int32_t fx_window(int32_t progress,int32_t start,int32_t length){
+    if(progress<=start)return 0;
+    if(progress>=start+length)return FX;
+    return fx_ease((int32_t)(((int64_t)(progress-start)<<16)/length));
+}
+static int floor_div(int32_t a,int32_t b){return a>=0?a/b:-((-a+b-1)/b);}
+/* Particles: dust specks swell into openings onto the page, each with an ink rim. */
+static void compose_dust(int32_t progress){
+    int32_t radius[BLOOM_MAX];
+    for(int i=0;i<bloom_count;i++)
+        radius[i]=(int32_t)(((int64_t)blooms[i].radius*fx_window(progress,blooms[i].delay,FX-blooms[i].delay))>>16);
+    for(int y=0;y<UI_HEIGHT;y++){
+        memset(row_code,CODE_OUT,UI_WIDTH);
+        /* A rim shows only where no other bloom has opened. */
+        for(int i=0;i<bloom_count;i++)if(radius[i]>0)code_disc(y,blooms[i].x,blooms[i].y,radius[i]+(2<<8),CODE_INK);
+        for(int i=0;i<bloom_count;i++)code_disc(y,blooms[i].x,blooms[i].y,radius[i],CODE_IN);
+        emit_row(y);
+    }
+}
+/* Gases: the page's ribbons, continued across the frame and repeated at the ribbon
+   gap, swell from the middle lane outward until they merge. */
+static void compose_ribbons(int32_t progress){
+    const int32_t gap=UI_GAS_RIBBON_GAP<<8,full=(UI_GAS_RIBBON_GAP/2+2)<<8,rim=2<<8;
+    const int reach=UI_GAS_WAVE_AMPLITUDE+4+UI_GAS_RIBBON_GAP;
+    int lo=floor_div(-(reach<<8)-ribbon_top,gap),hi=floor_div(((UI_HEIGHT+reach)<<8)-ribbon_top,gap)+1;
+    int32_t half[64];
+    if(hi-lo>=64)hi=lo+63;
+    for(int k=lo;k<=hi;k++){
+        int32_t delay=FX*45/100*LV_MIN(LV_ABS(k-1),5)/5;
+        half[k-lo]=(int32_t)(((int64_t)full*fx_window(progress,delay,FX*55/100))>>16);
     }
     for(int y=0;y<UI_HEIGHT;y++){
-        /* Source rows: vertical sweeps drift rows, horizontal sweeps drift columns. */
-        int yi=vertical?y+drift_in:y,yo=vertical?y+drift_out:y;
-        const uint8_t *in_row=(unsigned)yi<UI_HEIGHT?SCENE_BITS(1)+yi*ROW_BYTES:NULL;
-        const uint8_t *out_row=(unsigned)yo<UI_HEIGHT?SCENE_BITS(0)+yo*ROW_BYTES:NULL;
-        int dxi=vertical?0:drift_in,dxo=vertical?0:drift_out;
-        uint8_t *out=transition_bits+y*ROW_BYTES;
-        for(int xb=0;xb<ROW_BYTES;xb++){
-            unsigned incoming=0,in_band=0,seam=0;
-            for(int k=0;k<8;k++){
-                int x=xb*8+k,a=vertical?y:x;
-                int32_t edge=edge_at[vertical?x:y],travel=(reverse?along-1-a:a)<<8;
-                int32_t distance=travel>edge?travel-edge:edge-travel;
-                incoming=incoming<<1|(travel<edge);
-                in_band=in_band<<1|(distance<band);
-                seam=seam<<1|(distance<358);
+        for(int x=0;x<UI_WIDTH;x++){
+            int32_t rel=((int32_t)y<<8)-ribbon_top-ribbon_wave[x];
+            int k0=floor_div(rel+gap/2,gap);uint8_t code=CODE_OUT;
+            for(int k=LV_MAX(k0-1,lo);k<=LV_MIN(k0+1,hi);k++){
+                int32_t h=half[k-lo],d=LV_ABS(rel-k*gap);
+                if(h<=0)continue;
+                if(d<h){code=CODE_IN;break;}
+                if(d<h+rim)code=CODE_INK;
             }
-            unsigned b=(row_byte_shifted(in_row,xb*8+dxi)&incoming)|(row_byte_shifted(out_row,xb*8+dxo)&~incoming);
-            /* One continuous seam, without decorative cross stitches. */
-            out[xb]=(uint8_t)((b&~in_band)|(seam&in_band));
+            row_code[x]=code;
         }
+        emit_row(y);
+    }
+}
+/* Climate: a droplet falls onto the humidity icon and its splash opens the page. */
+#define DROP_FALL (FX*35/100)
+static void compose_droplet(int32_t progress){
+    int height=UI_CLIMATE_DROP_HEIGHT-1,lift=0;int32_t reveal=0;
+    if(progress<DROP_FALL){
+        /* Falls from above the frame under gravity. */
+        int32_t u=(int32_t)(((int64_t)progress<<16)/DROP_FALL);
+        lift=(int)(((FX-(((int64_t)u*u)>>16))*(drop_top+height+4))>>16);
+    }else reveal=(int32_t)(((int64_t)drop_reach*fx_window(progress,DROP_FALL,FX-DROP_FALL))>>16);
+    int top=drop_top-lift;
+    for(int y=0;y<UI_HEIGHT;y++){
+        memset(row_code,CODE_OUT,UI_WIDTH);
+        int yy=y-top;
+        /* A paper outline keeps the falling droplet visible over ink. */
+        if(yy>=-1 && yy<=height+1){
+            int w=drop_half[LV_CLAMP(0,yy,height)];
+            code_span(drop_x-w-1,drop_x+w+1,CODE_PAPER);
+        }
+        if(yy>=0 && yy<=height)code_span(drop_x-drop_half[yy],drop_x+drop_half[yy],CODE_INK);
+        if(reveal>0){
+            code_disc(y,drop_x<<8,drop_base<<8,reveal+(3<<8),CODE_INK);
+            code_disc(y,drop_x<<8,drop_base<<8,reveal,CODE_IN);
+        }
+        emit_row(y);
+    }
+}
+/* Formaldehyde: an oxygen atom's ink swells over the frame and opens like an iris. */
+static void compose_atom(int32_t progress){
+    int32_t ink=(int32_t)(((int64_t)atom_reach*fx_window(progress,0,FX*55/100))>>16);
+    int32_t hole=(int32_t)(((int64_t)atom_reach*fx_window(progress,FX*25/100,FX*75/100))>>16);
+    hole=LV_MIN(hole,ink);
+    for(int y=0;y<UI_HEIGHT;y++){
+        memset(row_code,CODE_OUT,UI_WIDTH);
+        if(ink>0){
+            /* A paper halo keeps the disc distinct from ink beneath it. */
+            code_disc(y,atom_x,atom_y,ink+(2<<8),CODE_PAPER);
+            code_disc(y,atom_x,atom_y,ink,CODE_INK);
+            code_disc(y,atom_x,atom_y,hole,CODE_IN);
+        }
+        emit_row(y);
     }
 }
 static void compose_transition(int from,int to,int32_t progress){
     /* Exact endpoints avoid a one-frame jump when returning to direct rendering. */
     if(progress<=0){memcpy(transition_bits,SCENE_BITS(0),FRAME_BYTES);return;}
     if(progress>=FX){memcpy(transition_bits,SCENE_BITS(1),FRAME_BYTES);return;}
-    if(is_portal(from,to))compose_portal(from,to,progress);
-    else compose_sweep(from,to,progress);
+    switch(transition_effect(from)){
+    case EFFECT_PORTAL:compose_portal(from,to,progress);break;
+    case EFFECT_DUST:compose_dust(progress);break;
+    case EFFECT_RIBBONS:compose_ribbons(progress);break;
+    case EFFECT_DROPLET:compose_droplet(progress);break;
+    default:compose_atom(progress);break;
+    }
 }
 static void render_scene_buffer(int index,int which){
     lv_layer_t offscreen;lv_canvas_init_layer(scene_canvas[index],&offscreen);
@@ -1530,7 +1634,7 @@ static void draw(lv_event_t *event){
     }
     if(!snapshots_ready){
         double start=t-movement;
-        anim_t=start;render_scene_buffer(0,scene);
+        anim_t=start;render_scene_buffer(0,scene);prepare_effect(scene);
         anim_t=start+duration;render_scene_buffer(1,destination);
         anim_t=t;snapshots_ready=true;
     }
@@ -1619,7 +1723,11 @@ static int cycle_next(int from,int direction){
     int n=ATMOS_SCENES-CYCLE_FIRST,i=from<CYCLE_FIRST?(direction>0?-1:0):from-CYCLE_FIRST;
     return CYCLE_FIRST+((i+direction)%n+n)%n;
 }
-static float transition_duration(int from,int to){return is_portal(from,to)?1.4f:1.2f;}
+static float transition_duration(int from,int to){
+    (void)to;
+    static const float seconds[ATMOS_SCENES]={1.4f,1.4f,1.5f,1.3f,1.6f,1.4f};
+    return seconds[from];
+}
 static void prerender_step(void){
     if(!automatic || pm_blend_age<UI_PM_TRANSITION_TIME){pre_stage=0;return;}
     double start=t+(6.5f-age);
@@ -1629,7 +1737,7 @@ static void prerender_step(void){
     }
     /* Wait for the last sample before the transition so the snapshot shows its data. */
     if(pre_stage==2 || next_sample<=start+1e-4)return;
-    if(pre_stage==0){anim_t=start;render_scene_buffer(0,scene);prerendered_last_step=scene;}
+    if(pre_stage==0){anim_t=start;render_scene_buffer(0,scene);prepare_effect(scene);prerendered_last_step=scene;}
     else{anim_t=start+transition_duration(scene,to);render_scene_buffer(1,to);prerendered_last_step=to;}
     anim_t=t;pre_stage++;
 }
@@ -1670,9 +1778,6 @@ void atmos_set_scene(int requested){
        at their time so the end still meets the live scene exactly. */
     bool ready=pre_stage==2 && pre_from==scene && pre_to==requested && pre_version==data_version && pre_start<=t+1e-4;
     double start=ready?pre_start:t;
-    /* The anchored bubble must match the CO2 snapshot: start time when leaving CO2,
-       end time when arriving at it. */
-    anim_t=scene==1?start:start+duration;select_portal(scene,requested);anim_t=t;
     destination=requested;movement=t-start;moving=true;snapshots_ready=ready;pre_stage=0;
     if(ready)prerendered_transitions++;
 }
@@ -1723,15 +1828,15 @@ int atmos_self_test(void){
     atmos_select_pm(1);for(int i=0;i<4;i++)atmos_step(.1f);
     /* Every directed pair must meet the real, live scenes at both endpoints. */
     for(int from=0;from<ATMOS_SCENES;from++)for(int to=0;to<ATMOS_SCENES;to++)if(from!=to){
-        select_portal(from,to);render_scene_buffer(0,from);render_scene_buffer(1,to);
+        render_scene_buffer(0,from);prepare_effect(from);render_scene_buffer(1,to);
         compose_transition(from,to,0);
         if(memcmp(transition_bits,SCENE_BITS(0),FRAME_BYTES))return 8;
         compose_transition(from,to,FX);
         if(memcmp(transition_bits,SCENE_BITS(1),FRAME_BYTES))return 9;
         static uint8_t reference[FRAME_BYTES];
         const int32_t probes[]={1,FX/9,FX/4,FX/3,FX/2,FX*2/3,FX*3/4,FX*9/10,FX-1};
-        for(unsigned k=0;k<sizeof probes/sizeof *probes;k++){
-            if(is_portal(from,to))compose_portal_ref(from,to,probes[k]);else compose_sweep_ref(from,to,probes[k]);
+        for(unsigned k=0;k<sizeof probes/sizeof *probes && transition_effect(from)==EFFECT_PORTAL;k++){
+            compose_portal_ref(from,to,probes[k]);
             memcpy(reference,transition_bits,FRAME_BYTES);
             compose_transition(from,to,probes[k]);
             if(memcmp(reference,transition_bits,FRAME_BYTES))return 26;
@@ -1769,7 +1874,7 @@ int atmos_self_test(void){
     puts("PM: independent history channels, rapid selection, fixed transition window and missing-sample gaps passed.");
     puts("Model: sampling, history, pruning, navigation, pause, visibility and external data passed.");
     puts("Transition endpoints: all 30 directed scene pairs match their live LVGL frames exactly.");
-    puts("Compositor: fast portal and sweep match the reference compositors at 9 progress points for all 30 pairs.");
+    puts("Compositor: the fast portal matches the reference compositor at 9 progress points for every pair leaving a portal page.");
     return 0;
 }
 

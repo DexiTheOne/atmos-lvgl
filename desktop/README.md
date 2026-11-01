@@ -28,9 +28,9 @@ Windows presentation composes the frame and letterboxing in an offscreen bitmap 
 | S | Save native-resolution `atmos-frame.bmp` in the working directory |
 | Escape | Close |
 
-Minimizing freezes active time. Scenes hold for 6.5 seconds. Portals take 1.4 seconds; artwork sweeps take 1.2 seconds. Navigation during movement keeps the latest requested destination. History starts empty, samples every two active seconds, and retains two minutes. All default readings are simulated. The demo status cutoffs remain illustrative. All four PM channels have independent simulated readings and independent fields for real sensor input.
+Minimizing freezes active time. Scenes hold for 6.5 seconds. Transitions take 1.3 to 1.6 seconds, depending on the page being left. Navigation during movement keeps the latest requested destination. History starts empty, samples every two active seconds, and retains two minutes. All default readings are simulated. The demo status cutoffs remain illustrative. All four PM channels have independent simulated readings and independent fields for real sensor input.
 
-The continuous journey is overview â†’ status-circle zoom â†’ CO2 â†’ live-bubble zoom â†’ particles â†’ airflow sweep â†’ gases â†’ horizontal ribbon sweep â†’ climate â†’ horizontal ribbon sweep â†’ formaldehyde â†’ inverse status portal â†’ overview. Reverse navigation reverses the corresponding treatment. Both scenes keep animating during transitions. A real visible CO2 bubble is selected and anchored for the zoom. Gas/climate travel reveals both animated detail pages through the ribbon sweep; their selected-channel historical graphs remain part of the captured scenes. Transitions use nearest-pixel sampling and opaque masks, with no alpha crossfade or tones other than ink and paper.
+Transitions are chosen by the page being left, so any page can be reached from any other: the overview zooms into its status circle, CO2 zooms into one of its visible bubbles, particles leave by dust bloom, gases by ribbons swell, climate by a droplet falling onto its humidity icon and splashing open, and formaldehyde by an oxygen atom whose ink swells over the frame and opens like an iris. Anchors (the bubble, dust specks, ribbon line, droplet icon and oxygen atom) are taken from the outgoing snapshot. Transitions use nearest-pixel sampling and opaque masks, with no alpha crossfade or tones other than ink and paper.
 
 ## Migration status
 
@@ -87,9 +87,9 @@ After building, from `desktop/build` run `./atmos.exe --capture-gases` for empty
 short/full history, animation, live changes, missing values and both navigation
 directions under GOOD/CHECK AIR readings. Captures are desktop verification only.
 
-Gases navigation uses a curved horizontal ribbon sweeping vertically: top to
-bottom when entering from particles or climate, bottom to top when exiting.
-Both scene artworks remain animated during the 1.2-second sweep.
+Gases opens onto the next page by ribbons swell: its own ribbons, continued across the
+frame at the ribbon gap, thicken from the middle lane outward until they merge.
+Both scenes are still snapshots during the transition.
 
 The full visual standardization is documented in [UI design system](../docs/UI_DESIGN_SYSTEM.md). All headers use the same title, badge and divider geometry; all charts share one renderer. The native six-state comparison is `../artifacts/redesign-after.png`.
 
