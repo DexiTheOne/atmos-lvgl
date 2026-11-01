@@ -155,6 +155,8 @@ Changes since the previous run:
 
 Device work per frame (ms, from the `PROFILE` line):
 
+The component now logs three `PROFILE` lines (`still`, `trans`, `prerender`) with six columns; the sixth, Formaldehyde, has not been measured yet, so `--hw-pace` uses the CO2 costs for it.
+
 | | Overview | CO2 | Particles | Gases | Climate |
 |---|---|---|---|---|---|
 | Still frame | 70.9 | 26.4 | 116.0 | 70.1 | 25.2 |

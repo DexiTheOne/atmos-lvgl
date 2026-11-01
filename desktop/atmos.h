@@ -2,10 +2,14 @@
 #define ATMOS_H
 #include "lvgl.h"
 /* All PM fields are independent cumulative mass concentrations in ug/m3.
-   pm retains its existing name for PM2.5. Supply NAN for missing PM channels. */
+   pm retains its existing name for PM2.5. Supply NAN for missing PM channels.
+   pressure is barometric pressure in hPa (NAN without a sensor).
+   hcho is formaldehyde in ppb (SEN68; NAN without a sensor). */
 typedef struct {
     float co2, pm, voc, nox, temp, rh;
     float pm1, pm4, pm10;
+    float pressure;
+    float hcho;
 } atmos_readings;
 void atmos_init(void);
 void atmos_step(double seconds);
@@ -20,6 +24,8 @@ void atmos_set_readings(atmos_readings readings);
 void atmos_select_pm(int size);
 void atmos_cycle_pm(int direction);
 bool atmos_select_pm_at(int x,int y);
+/* Number of scenes. */
+#define ATMOS_SCENES 6
 int atmos_self_test(void);
 /* Test hook: the 1-bit frame (50-byte MSB-first rows, 1 = paper) composed for
    the last transition draw, or NULL when no transition was drawn. */
@@ -28,7 +34,7 @@ const uint8_t *atmos_transition_frame(void);
 bool atmos_is_moving(void);
 /* Transitions that started from snapshots pre-rendered during the hold. */
 unsigned atmos_prerendered_transitions(void);
-/* Current scene (0-4) and, while moving, the transition's destination. */
+/* Current scene (0-5: overview, CO2, particles, gases, climate, formaldehyde) and, while moving, the transition's destination. */
 int atmos_scene(void);
 /* Diagnostic: direct fills that were clamped to the layer buffer. Should stay 0. */
 unsigned atmos_clip_overruns(void);

@@ -1,10 +1,11 @@
-#ifndef ATMOS_UI_THEME_H
+﻿#ifndef ATMOS_UI_THEME_H
 #define ATMOS_UI_THEME_H
 /* Dashboard and CO2 typography use the shared DejaVu Sans Bold subset. */
 #define UI_WIDTH 400
 #define UI_HEIGHT 300
 #define UI_MARGIN 12
 #define UI_DIVIDER 1
+#define UI_TEXT_GAP 12 /* Between stacked label, value and unit ink on detail pages. */
 /* Logical 1-bit colours. The simulator maps them to display tones at runtime. */
 #define UI_COLOR_INK 0x000000u
 #define UI_COLOR_PAPER 0xffffffu
@@ -24,7 +25,7 @@
 #define UI_UNIT_GAP 5
 /* Reusable badge and flower component parameters. */
 #define UI_BADGE_PADDING 8
-#define UI_BADGE_HEIGHT 29
+#define UI_BADGE_HEIGHT 30 /* Even, like the title and badge ink heights, so both centre exactly. */
 #define UI_BADGE_WIDTH 128
 #define UI_BADGE_X (UI_WIDTH-UI_MARGIN-UI_BADGE_WIDTH)
 #define UI_FLOWER_RADIUS 69
@@ -41,41 +42,55 @@
 #define UI_FOOTER_TOP 205
 #define UI_FOOTER_PADDING 11
 #define UI_FOOTER_DIVIDER 2
-#define UI_FOOTER_LABEL_Y 213
-#define UI_FOOTER_BASELINE 267
-#define UI_FOOTER_UNIT_Y 275
-#define UI_FLOWER_X 310
+#define UI_FLOWER_X 319 /* Ring ink ends at the right margin (x 387). */
 #define UI_FLOWER_Y 127
-#define UI_MAIN_LABEL_Y 60
-#define UI_MAIN_VALUE_Y 80
-#define UI_MAIN_UNIT_Y 175
-#define UI_PRIMARY_WIDTH 210
+#define UI_MAIN_VALUE_SIZE 64
+#define UI_MAIN_GAP UI_TEXT_GAP
+#define UI_FOOTER_GAP UI_TEXT_GAP
 /* CO2 detail page and reusable time-series chart parameters. */
 #define UI_CO2_TITLE_SIZE UI_FONT_TITLE
-#define UI_CO2_VALUE_SIZE 96
+#define UI_CO2_VALUE_SIZE 80
 #define UI_CO2_COMPACT_SIZE 32
 #define UI_CO2_UNIT_SIZE 24
 #define UI_CO2_TITLE_Y 6
-#define UI_CO2_UNIT_GAP 10
-#define UI_CO2_VALUE_WIDTH 248
+#define UI_CO2_UNIT_GAP UI_TEXT_GAP
 #define UI_CO2_DIVIDER_Y 162
-#define UI_BUBBLE_LEFT 270
-#define UI_BUBBLE_RIGHT 376
+#define UI_BUBBLE_LEFT UI_BADGE_X /* Bubbles span the rating badge (x 260-387). */
+#define UI_BUBBLE_RIGHT 388 /* Bubble ink ends at the right margin (x 387). */
 #define UI_BUBBLE_TOP 58
 #define UI_BUBBLE_BOTTOM 195
-#define UI_BUBBLE_COUNT 8
+#define UI_BUBBLE_COUNT 12
+#define UI_BUBBLE_MIN 2 /* Bubbles shown at outdoor CO2. */
+#define UI_CO2_BUBBLE_BASE 400.0f /* ppm with UI_BUBBLE_MIN bubbles */
+#define UI_CO2_BUBBLE_FULL 3000.0f /* ppm with every bubble */
 #define UI_BUBBLE_MAX_RADIUS 23
 #define UI_BUBBLE_STROKE 3
 #define UI_BUBBLE_SPEED 18.0f /* pixels per active second */
 #define UI_BUBBLE_SWAY 3.0f
 #define UI_HISTORY_PANEL_Y 205
-#define UI_HISTORY_LEFT 60
-#define UI_HISTORY_RIGHT 382
-#define UI_HISTORY_TOP 217
-#define UI_HISTORY_BOTTOM 267
-#define UI_HISTORY_TICK_Y 275
-#define UI_HISTORY_CAPTION_Y 286
+/* Formaldehyde page: the CO2 layout, with floating H2CO molecules (central C ring,
+   filled O, two small H rings) that fill in as the reading rises. */
+#define UI_HCHO_UNIT_SIZE UI_CO2_UNIT_SIZE
+#define UI_HCHO_FIELD_GAP 16 /* Between the value column and the molecule field. */
+#define UI_HCHO_FIELD_RIGHT 388 /* Molecule ink ends at the right margin (x 387). */
+#define UI_HCHO_FIELD_TOP UI_BUBBLE_TOP
+#define UI_HCHO_FIELD_BOTTOM UI_BUBBLE_BOTTOM
+#define UI_HCHO_MOLECULES 10
+#define UI_HCHO_MIN 1 /* Molecules shown near zero. */
+#define UI_HCHO_FULL UI_SENSOR_HCHO_MAX /* ppb with every molecule */
+#define UI_HCHO_LOG_KNEE 10.0f /* ppb; the count rises fastest below it */
+#define UI_HCHO_GROW_TIME .6f /* Seconds for a molecule to grow in or shrink away. */
+#define UI_HCHO_WANDER 3.0f /* Drift amplitude around each home, pixels. */
+#define UI_HCHO_CHART_MIN_RANGE 40.0f /* ppb */
+#define UI_HISTORY_LEFT 62
+#define UI_HISTORY_RIGHT 384
+#define UI_HISTORY_TOP 214
+#define UI_HISTORY_BOTTOM 264
+#define UI_HISTORY_TICK_Y 272
 #define UI_HISTORY_DUAL_HEIGHT 30
+#define UI_HISTORY_PILL_PADDING 3 /* Cap ink to the pill outline, vertically. */
+#define UI_HISTORY_PILL_PADDING_X 2 /* Extra horizontal room for the corners. */
+#define UI_HISTORY_PILL_RADIUS 5
 #define UI_HISTORY_DUAL_GAP 11
 #define UI_CHART_LEFT UI_HISTORY_LEFT
 #define UI_CHART_RIGHT UI_HISTORY_RIGHT
@@ -83,51 +98,78 @@
 #define UI_CHART_BOTTOM UI_HISTORY_BOTTOM
 #define UI_CHART_FONT_SIZE 12
 #define UI_CHART_Y_FONT_SIZE 12
-#define UI_CHART_UNIT_X 10
+#define UI_CHART_TICK_LENGTH 3
+#define UI_CHART_LABEL_GAP 4 /* Between tick ends and label ink, and above the caption. */
 #define UI_CHART_CHANNEL_X 368
 #define UI_CHART_TICK_Y UI_HISTORY_TICK_Y
-#define UI_CHART_CAPTION_Y UI_HISTORY_CAPTION_Y
 #define UI_CHART_X_INTERVALS 4
 #define UI_CHART_Y_INTERVALS 2
+/* Highest readings the sensors report (SCD4x CO2, SEN5x PM, VOC/NOx index,
+   temperature, humidity); chart scales stop here. */
+#define UI_SENSOR_CO2_MAX 40000.0f
+#define UI_SENSOR_PM_MAX 1000.0f
+#define UI_SENSOR_INDEX_MAX 500.0f
+#define UI_SENSOR_TEMP_MAX 60.0f
+#define UI_SENSOR_RH_MAX 100.0f
+#define UI_SENSOR_PRESSURE_MAX 1100.0f
+#define UI_SENSOR_HCHO_MAX 1000.0f /* SEN68 formaldehyde, ppb */
 #define UI_CHART_PADDING .04f
 #define UI_CHART_MIN_RANGE 100.0f
+#define UI_CHART_MIN_RANGE_RATIO .05f /* Minimum scale range as a share of the peak. */
+#define UI_CHART_THOUSANDS 9000.0f
 #define UI_CHART_LINE_WIDTH 2
 #define UI_COLOR_CHART_FILL UI_COLOR_PAPER
 /* PM detail page and its components. */
 #define UI_PM_HEADER_Y 10
-#define UI_PM_VALUE_Y 48
-#define UI_PM_VALUE_WIDTH 180
-#define UI_PM_VALUE_SIZE UI_FONT_VALUE
-#define UI_PM_UNIT_Y 119
-#define UI_PM_CARD_Y 141
-#define UI_PM_CARD_HEIGHT 58
+#define UI_PM_VALUE_SIZE 72
+#define UI_PM_CARD_HEIGHT 59
+#define UI_PM_CARD_ROW_GAP 5
 #define UI_PM_CARD_GAP 4
 #define UI_PM_CARD_WIDTH ((UI_WIDTH-2*UI_MARGIN-3*UI_PM_CARD_GAP)/4)
 #define UI_PM_CARD_PADDING 6
+#define UI_PM_CARD_RADIUS 4 /* Corner radius, drawn from row spans by pill(). */
 #define UI_PM_LABEL_SIZE 12
 #define UI_PM_CARD_VALUE_SIZE 24
 #define UI_PM_CARD_UNIT_SIZE 12
-#define UI_PM_FAN_X 218
-#define UI_PM_FAN_Y 95
-#define UI_PM_FAN_RADIUS 26
-#define UI_PM_FAN_SPEED 1.8f
-#define UI_PM_FLOW_LEFT 251
-#define UI_PM_FLOW_RIGHT 382
-#define UI_PM_FLOW_LANES 3
-#define UI_PM_FLOW_Y 78
-#define UI_PM_FLOW_GAP 17
-#define UI_PM_FLOW_AMPLITUDE 6
-#define UI_PM_FLOW_SPEED 30.0f
-#define UI_PM_PARTICLE_MAX 18
-#define UI_PM_DENSITY_TIME .8f
 #define UI_PM_TRANSITION_TIME .4f
+/* Particle field: dotted floor grid with drifting dust, redrawn UI_PM_FIELD_FPS times a second. */
+#define UI_PM_FIELD_LEFT (UI_MARGIN+2*(UI_PM_CARD_WIDTH+UI_PM_CARD_GAP)) /* PM4 card left edge, x 202. */
+#define UI_PM_FIELD_RIGHT 387 /* Right margin. */
+#define UI_PM_FIELD_TOP 54 /* Spans the value+unit ink rows. */
+#define UI_PM_FIELD_BOTTOM 134
+#define UI_PM_FIELD_CX ((UI_PM_FIELD_LEFT+UI_PM_FIELD_RIGHT)/2)
+#define UI_PM_FIELD_FPS 20
+#define UI_PM_HORIZON_Y 81
+#define UI_PM_CAMERA_HEIGHT 1.0f
+#define UI_PM_GRID_NEAR 1.0f
+#define UI_PM_GRID_FAR 3.6f
+#define UI_PM_GRID_COLUMNS 7
+#define UI_PM_GRID_DOT_STEP 4.0f
+#define UI_PM_GRID_DOT_MAX 600
+#define UI_PM_DEPTH_NEAR 1.15f
+#define UI_PM_DEPTH_FAR 3.6f
+#define UI_PM_HEIGHT_MIN .15f
+#define UI_PM_DRIFT_X .3f
+#define UI_PM_DRIFT_Y .15f
+#define UI_PM_DRIFT_DEPTH .35f
+/* Drift cycles per ten minutes (higher is faster); each axis adds a per-dot offset. */
+#define UI_PM_DRIFT_SPEED 22
+/* Near-plane dot radius per size class: PM1, PM2.5, PM4, PM10. */
+#define UI_PM_SIZE_PM1 1.0f
+#define UI_PM_SIZE_PM25 1.8f
+#define UI_PM_SIZE_PM4 2.6f
+#define UI_PM_SIZE_PM10 3.6f
+#define UI_PM_PARTICLE_MAX 80
+#define UI_PM_DENSITY_MIN 8
+#define UI_PM_DENSITY_TIME .8f
+#define UI_PM_DENSITY_LIMIT 200.0f
+#define UI_PM_DENSITY_HALF 40.0f
 #define UI_PM_PANEL_Y UI_HISTORY_PANEL_Y
 #define UI_PM_CHART_LEFT UI_HISTORY_LEFT
 #define UI_PM_CHART_RIGHT UI_HISTORY_RIGHT
 #define UI_PM_CHART_TOP UI_HISTORY_TOP
 #define UI_PM_CHART_BOTTOM UI_HISTORY_BOTTOM
 #define UI_PM_CHART_TICK_Y UI_HISTORY_TICK_Y
-#define UI_PM_CHART_CAPTION_Y UI_HISTORY_CAPTION_Y
 #define UI_PM_CHART_INTERVALS 4
 #define UI_PM_CHART_Y_INTERVALS 2
 #define UI_PM_CHART_PADDING .05f
@@ -135,31 +177,34 @@
 #define UI_PM_CHART_LINE_WIDTH 2
 #define UI_PM_CHART_FONT_SIZE 12
 #define UI_PM_READOUT_SLIDE 4
-#define UI_PM_FAN_STROKE 3
-#define UI_PM_FAN_INSET 4
-#define UI_PM_FAN_HUB 9
-#define UI_PM_BLADE_HALF_ANGLE .37f
-#define UI_PM_FLOW_CURVATURE .055f
-#define UI_PM_FLOW_LANE_PHASE .4f
-#define UI_PM_PARTICLE_PADDING 5
-#define UI_PM_PARTICLE_SPEED_VARIATION .08f
-#define UI_PM_DENSITY_MIN 3
-#define UI_PM_DENSITY_LIMIT 100.0f
-#define UI_PM_DENSITY_HALF 20.0f
 /* Climate: native landscape layout, two-tone icon and chart settings. */
 #define UI_CLIMATE_TITLE_Y 6
 #define UI_CLIMATE_LABEL_Y UI_DETAIL_LABEL_Y
 #define UI_CLIMATE_VALUE_Y UI_DETAIL_VALUE_Y
-#define UI_CLIMATE_VALUE_SIZE UI_FONT_VALUE
+#define UI_CLIMATE_VALUE_SIZE 48 /* Largest whose four-digit pressure fits the inline row. */
 #define UI_CLIMATE_UNIT_Y UI_DETAIL_UNIT_Y
-#define UI_CLIMATE_ICON_X 164
-#define UI_CLIMATE_ICON_HEIGHT 80
-#define UI_CLIMATE_ICON_RADIUS 18
-#define UI_CLIMATE_STROKE 3
+#define UI_CLIMATE_UNIT_GAP 6 /* Between a value and its unit. */
+#define UI_CLIMATE_ICON_SIZE 41 /* Odd, so icons centre exactly on the value ink. */
+#define UI_CLIMATE_STROKE 2
+#define UI_CLIMATE_STEM_HALF 5
+#define UI_CLIMATE_BULB_RADIUS 10
+#define UI_CLIMATE_MERCURY_HALF 2
+#define UI_CLIMATE_DROP_RADIUS 11
+#define UI_CLIMATE_DROP_HEIGHT 41
+#define UI_CLIMATE_GAUGE_TICKS 7
+#define UI_CLIMATE_GAUGE_START 3.927f /* 225 degrees: lower left. */
+#define UI_CLIMATE_GAUGE_SWEEP -4.712f /* 270 degrees, clockwise. */
+#define UI_CLIMATE_GAUGE_TICK 4
+#define UI_CLIMATE_GAUGE_HUB 3
+#define UI_CLIMATE_NEEDLE_BASE 2.0f
+#define UI_CLIMATE_NEEDLE_TIP .8f
+#define UI_CLIMATE_GAUGE_TREMOR .04f
+#define UI_CLIMATE_GAUGE_TREMOR_SPEED 2.3f
+#define UI_CLIMATE_PRESSURE_MIN 960.0f
+#define UI_CLIMATE_PRESSURE_MAX 1060.0f
+#define UI_CLIMATE_MIN_PRESSURE_RANGE 4.0f
 #define UI_CLIMATE_TEMP_MIN 0.0f
-#define UI_CLIMATE_TEMP_MAX 40.0f
-#define UI_CLIMATE_HEAT_SPEED 7.0f
-#define UI_CLIMATE_HEAT_GAP 15
+#define UI_CLIMATE_TEMP_MAX UI_SENSOR_TEMP_MAX
 #define UI_CLIMATE_WAVE_SPEED 1.4f
 #define UI_CLIMATE_WAVE_AMPLITUDE 2.0f
 #define UI_CLIMATE_WAVE_LENGTH .18f
@@ -170,7 +215,6 @@
 #define UI_CLIMATE_CHART_HEIGHT UI_HISTORY_DUAL_HEIGHT
 #define UI_CLIMATE_CHART_GAP (UI_HISTORY_DUAL_HEIGHT+UI_HISTORY_DUAL_GAP)
 #define UI_CLIMATE_TICK_Y UI_HISTORY_TICK_Y
-#define UI_CLIMATE_CAPTION_Y UI_HISTORY_CAPTION_Y
 #define UI_CLIMATE_FONT_SIZE 12
 #define UI_CLIMATE_X_INTERVALS 4
 #define UI_CLIMATE_MIN_TEMP_RANGE 4.0f
@@ -179,15 +223,6 @@
 #define UI_CLIMATE_LABEL_SIZE UI_FONT_SECONDARY
 #define UI_CLIMATE_UNIT_SIZE UI_FONT_UNIT
 #define UI_CLIMATE_FALLBACK_SIZE 32
-#define UI_CLIMATE_VALUE_WIDTH 120
-#define UI_CLIMATE_DIVIDER_INSET 10
-#define UI_CLIMATE_STEM_HALF 8
-#define UI_CLIMATE_MERCURY_HALF 3
-#define UI_CLIMATE_BULB_INSET 5
-#define UI_CLIMATE_HEAT_COUNT 4
-#define UI_CLIMATE_HEAT_X 24
-#define UI_CLIMATE_HEAT_SIZE 2
-#define UI_CLIMATE_DROP_SHOULDER .65f
 #define UI_CLIMATE_AXIS_GAP 6
 #define UI_CLIMATE_AXIS_CENTER 7
 #define UI_CLIMATE_TICK_LENGTH 3
@@ -199,33 +234,39 @@
 #define UI_GAS_VALUE_SIZE UI_FONT_VALUE
 #define UI_GAS_FALLBACK_SIZE 32
 #define UI_GAS_SMALL_SIZE 24
-#define UI_GAS_VALUE_WIDTH 90
-#define UI_GAS_COLUMN_STEP 116
-#define UI_GAS_DIVIDER_X (UI_MARGIN+UI_GAS_VALUE_WIDTH/2+UI_GAS_COLUMN_STEP/2)
-#define UI_GAS_ART_DIVIDER_X 218
+/* Text columns are as wide as a three-digit value's ink, and the group
+   (columns, divider, ribbons) has the same inset from both screen edges. */
+#define UI_GAS_SIDE_INSET UI_MARGIN
+#define UI_GAS_COLUMN_WIDTH 80
+#define UI_GAS_COLUMN_GAP 20
+#define UI_GAS_COLUMN_STEP (UI_GAS_COLUMN_WIDTH+UI_GAS_COLUMN_GAP)
+
+#define UI_GAS_DIVIDER_X (UI_GAS_SIDE_INSET+UI_GAS_COLUMN_WIDTH+UI_GAS_COLUMN_GAP/2)
+#define UI_GAS_ART_DIVIDER_X (UI_GAS_RIBBON_LEFT-UI_GAS_COLUMN_GAP/2)
 #define UI_GAS_DIVIDER_BOTTOM 176
 #define UI_GAS_LABEL_SIZE UI_FONT_SECONDARY
+#define UI_GAS_UNDERLINE 2
+#define UI_GAS_UNDERLINE_GAP 4
+#define UI_GAS_SWITCH_TIME 3.25f
 #define UI_GAS_RIBBON_LABEL_X 230
 #define UI_GAS_RIBBON_LABEL_Y 45
-#define UI_GAS_RIBBON_LEFT 222
-#define UI_GAS_RIBBON_RIGHT 382
-#define UI_GAS_RIBBON_GAP 23
-#define UI_GAS_WAVE_AMPLITUDE 17.0f
+#define UI_GAS_RIBBON_LEFT (UI_GAS_SIDE_INSET+UI_GAS_COLUMN_STEP+UI_GAS_COLUMN_WIDTH+UI_GAS_COLUMN_GAP)
+#define UI_GAS_RIBBON_RIGHT (UI_WIDTH-1-UI_GAS_SIDE_INSET)
+#define UI_GAS_RIBBON_GAP 30
+#define UI_GAS_WAVE_AMPLITUDE 20.0f
 #define UI_GAS_WAVE_CYCLES 1.15f
 #define UI_GAS_WAVE_SPEED .65f
 #define UI_GAS_LANE_PHASE 1.1f
-#define UI_GAS_HALF_WIDTH 5.0f
-#define UI_GAS_WIDTH_GAIN 2.0f
+#define UI_GAS_HALF_WIDTH 3.0f
+#define UI_GAS_WIDTH_GAIN 8.0f
 #define UI_GAS_EDGE_TAPER 0.0f
 #define UI_GAS_INTENSITY_TIME 1.5f
-#define UI_GAS_VOC_SCALE 150.0f
-#define UI_GAS_NOX_SCALE 15.0f
 #define UI_GAS_ACCENTS 0
 #define UI_GAS_ACCENT_SPEED 9.0f
 #define UI_GAS_ACCENT_RADIUS 1
 #define UI_GAS_PARTICLES 12
 #define UI_GAS_PARTICLE_SPEED 5.0f
-#define UI_GAS_PARTICLE_OFFSET 5.0f
+#define UI_GAS_PARTICLE_OFFSET 4.0f
 #define UI_GAS_PARTICLE_SWAY 2.0f
 #define UI_GAS_PANEL_Y UI_CLIMATE_PANEL_Y
 #define UI_GAS_CHART_LEFT UI_HISTORY_LEFT
@@ -243,12 +284,13 @@
 #define UI_GAS_CHART_AXIS_GAP 6
 #define UI_GAS_CHART_TICK_LENGTH 3
 #define UI_GAS_CHART_TICK_Y UI_CLIMATE_TICK_Y
-#define UI_GAS_CHART_CAPTION_Y UI_CLIMATE_CAPTION_Y
 #define UI_GAS_CHART_INTERVALS 4
 /* Badge rating limits: PLACEHOLDERS, to be tuned. "Fair"/"Poor" begin at these
    values (upper-limit measurements); climate uses good/fair bands, else poor. */
 #define UI_CO2_FAIR 800.0f   /* ppm */
 #define UI_CO2_POOR 1200.0f
+#define UI_HCHO_FAIR 30.0f   /* ppb */
+#define UI_HCHO_POOR 80.0f   /* about the WHO 0.1 mg/m3 guideline */
 #define UI_PM1_FAIR 10.0f    /* ug/m3 */
 #define UI_PM1_POOR 25.0f
 #define UI_PM25_FAIR 12.0f

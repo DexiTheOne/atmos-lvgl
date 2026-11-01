@@ -169,14 +169,15 @@ void AtmosComponent::report_() {
   ESP_LOGI(TAG, "pre-rendered transitions %u, compose avg %.1f ms, clip overruns %u %s",
            (unsigned) atmos_prerendered_transitions(), atmos_compose_ms(), (unsigned) atmos_clip_overruns(),
            atmos_overrun_detail());
-  // One line the simulator's --hw-pace profile is copied from (milliseconds, 0 = no data).
+  // Lines the simulator's --hw-pace profile is copied from (ms per scene, 0 = no data).
   auto avg = [](uint64_t sum, uint32_t n) { return n ? sum / 1000.0f / n : 0.0f; };
-  ESP_LOGI(TAG, "PROFILE still %.1f %.1f %.1f %.1f %.1f | trans %.1f %.1f %.1f %.1f %.1f | prerender %.1f %.1f %.1f %.1f %.1f",
-           avg(still_cost_[0], still_n_[0]), avg(still_cost_[1], still_n_[1]), avg(still_cost_[2], still_n_[2]),
-           avg(still_cost_[3], still_n_[3]), avg(still_cost_[4], still_n_[4]), avg(trans_cost_[0], trans_n_[0]),
-           avg(trans_cost_[1], trans_n_[1]), avg(trans_cost_[2], trans_n_[2]), avg(trans_cost_[3], trans_n_[3]),
-           avg(trans_cost_[4], trans_n_[4]), avg(pre_cost_[0], pre_n_[0]), avg(pre_cost_[1], pre_n_[1]),
-           avg(pre_cost_[2], pre_n_[2]), avg(pre_cost_[3], pre_n_[3]), avg(pre_cost_[4], pre_n_[4]));
+  auto row = [&](const char *name, const uint64_t *sum, const uint32_t *n) {
+    ESP_LOGI(TAG, "PROFILE %s %.1f %.1f %.1f %.1f %.1f %.1f", name, avg(sum[0], n[0]), avg(sum[1], n[1]),
+               avg(sum[2], n[2]), avg(sum[3], n[3]), avg(sum[4], n[4]), avg(sum[5], n[5]));
+  };
+  row("still", still_cost_, still_n_);
+  row("trans", trans_cost_, trans_n_);
+  row("prerender", pre_cost_, pre_n_);
   ESP_LOGI(TAG, "missed model steps %u  |  heap internal free %u (min %u, largest %u)  PSRAM free %u",
            (unsigned) this->missed_steps_, (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),

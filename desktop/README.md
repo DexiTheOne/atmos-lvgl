@@ -20,23 +20,23 @@ Windows presentation composes the frame and letterboxing in an offscreen bitmap 
 
 | Input | Action |
 |---|---|
-| 1â€“5 | Overview, CO2, particles, gases, climate |
+| 1â€“6 | Overview, CO2, particles, gases, climate, formaldehyde |
 | Arrow keys, click, mouse wheel | Navigate |
 | Space | Pause motion and history sampling |
 | A | Toggle automatic cycling |
-| F1â€“F4 | Quiet morning, occupied room, cooking, open windows |
+| F1â€“F5 | Quiet morning, occupied room, cooking, open windows, sensor full scale |
 | S | Save native-resolution `atmos-frame.bmp` in the working directory |
 | Escape | Close |
 
 Minimizing freezes active time. Scenes hold for 6.5 seconds. Portals take 1.4 seconds; artwork sweeps take 1.2 seconds. Navigation during movement keeps the latest requested destination. History starts empty, samples every two active seconds, and retains two minutes. All default readings are simulated. The demo status cutoffs remain illustrative. All four PM channels have independent simulated readings and independent fields for real sensor input.
 
-The continuous journey is overview â†’ status-circle zoom â†’ CO2 â†’ live-bubble zoom â†’ particles â†’ airflow sweep â†’ gases â†’ horizontal ribbon sweep â†’ climate â†’ inverse status portal â†’ overview. Reverse navigation reverses the corresponding treatment. Both scenes keep animating during transitions. A real visible CO2 bubble is selected and anchored for the zoom. Gas/climate travel reveals both animated detail pages through the ribbon sweep; their selected-channel historical graphs remain part of the captured scenes. Transitions use nearest-pixel sampling and opaque masks, with no alpha crossfade or tones other than ink and paper.
+The continuous journey is overview â†’ status-circle zoom â†’ CO2 â†’ live-bubble zoom â†’ particles â†’ airflow sweep â†’ gases â†’ horizontal ribbon sweep â†’ climate â†’ horizontal ribbon sweep â†’ formaldehyde â†’ inverse status portal â†’ overview. Reverse navigation reverses the corresponding treatment. Both scenes keep animating during transitions. A real visible CO2 bubble is selected and anchored for the zoom. Gas/climate travel reveals both animated detail pages through the ribbon sweep; their selected-channel historical graphs remain part of the captured scenes. Transitions use nearest-pixel sampling and opaque masks, with no alpha crossfade or tones other than ink and paper.
 
 ## Migration status
 
-All five scenes, 1-bit output, animated status/fan/bubbles/ribbons, scenario interpolation, shared immutable history, queued navigation, pause, automatic cycling, frame export, and external sensor input are implemented in C.
+All six scenes, 1-bit output, animated status/particle field/bubbles/ribbons, scenario interpolation, shared immutable history, queued navigation, pause, automatic cycling, frame export, and external sensor input are implemented in C.
 
-This native port is not pixel-identical to the reference. It uses shared native-size DejaVu Sans Bold fonts, simplified fan/status/ribbon geometry, and immediate numeric changes. The browser's checkmark reveal and rolling digits/footer transitions remain fidelity work. Browser preview controls remain in the original files.
+This native port is not pixel-identical to the reference. It uses shared native-size DejaVu Sans Bold fonts, a 3D particle field in place of the reference fan, simplified status/ribbon geometry, and immediate numeric changes. The browser's checkmark reveal and rolling digits/footer transitions remain fidelity work. Browser preview controls remain in the original files.
 
 During transitions, two hidden LVGL canvases rasterize the live source/destination scenes. A platform-independent C compositor zooms and reveals those pixels, and LVGL presents the composed image. The gas ribbon artwork uses opaque LVGL spans. The browser renderer is not involved.
 
@@ -48,7 +48,7 @@ For visual review, run `./atmos.exe --capture-transitions` from `desktop/build`,
 
 ## Later hardware port
 
-`atmos.c` and `atmos.h` contain no Windows APIs. On hardware, initialize LVGL and a 400 Ã— 300 display, register the panel flush callback, call `atmos_init()`, advance `atmos_step()` with elapsed active seconds, and service LVGL's tick/timer handler. Pass real readings through `atmos_set_readings()`; this disables generated demo readings until another demo scenario is selected. Values are CO2 ppm, PM2.5 ug/m3, VOC/NOx indices, temperature Celsius, and relative humidity percent.
+`atmos.c` and `atmos.h` contain no Windows APIs. On hardware, initialize LVGL and a 400 Ã— 300 display, register the panel flush callback, call `atmos_init()`, advance `atmos_step()` with elapsed active seconds, and service LVGL's tick/timer handler. Pass real readings through `atmos_set_readings()`; this disables generated demo readings until another demo scenario is selected. Values are CO2 ppm, PM2.5 ug/m3, VOC/NOx indices, temperature Celsius, relative humidity percent, and barometric pressure hPa (`pressure`, NAN without a sensor).
 
 The current desktop setup uses a 480 KB draw buffer, a separate 480 KB presentation buffer, three 480 KB transition buffers, an 8 KB axis-label raster, and a 4 MB LVGL heap, plus Windows presentation bitmaps. Those are desktop choices, not an ESP32 memory budget. A hardware port must select an appropriate color format, memory placement and buffering strategy, verify panel support for the requested third gray and pack pixels for the panel, integrate SCD30/SEN66 drivers, and measure refresh throughput, CPU, memory, and power. [LVGL display driver documentation](https://docs.lvgl.io/9.2/porting/display.html) describes the flush boundary. No firmware build or physical panel support is claimed here.
 
@@ -56,14 +56,14 @@ LVGL remains under its upstream MIT license in `vendor/lvgl/LICENCE.txt`.
 
 The redesigned overview and reusable native design tokens are documented in [UI design system](../docs/UI_DESIGN_SYSTEM.md). The overview footer now keeps PM2.5 and temperature visible; VOC and humidity remain available in their detail scenes.
 
-CO2 detail captures: run `./atmos.exe --capture-co2` from `desktop/build` for empty, short, full and wide-range histories. Chart labels use seconds before the newest stored sample; SEC AGO appears once. Chart fill is paper on the ink history panel; the panel has no grey. See [UI design system](../docs/UI_DESIGN_SYSTEM.md).
+CO2 detail captures: run `./atmos.exe --capture-co2` from `desktop/build` for empty, short, full and wide-range histories. Chart labels use seconds before the newest stored sample. History charts on every page have no unit or SEC AGO captions and grow into their space; a "LAST n SEC/MIN/HRS" pill (ink fill, paper outline and text) sits over the top-right corner, right-aligned to the time axis. The trace is drawn as 1-bit column spans, so steep slopes have no holes. The reading and PPM unit are centred on the CARBON DIOXIDE title's ink width, and the reading uses the largest font whose widest value (40.0k) fits that width. Bubble count follows CO2 on a log scale (2 at 400 ppm, all 12 from 3000 ppm); a bubble only appears or leaves while below the box. Chart fill is paper on the ink history panel; the panel has no grey. See [UI design system](../docs/UI_DESIGN_SYSTEM.md).
 
 
 PM detail: press 3, click a measurement card, or use Tab / ] / [ to cycle the selected
 PM size. All four cards stay live. atmos_readings fields pm1, pm (PM2.5), pm4 and
 pm10 are independent cumulative mass concentrations; integrations must supply each
 field, or NAN for unavailable channels. Use designated initializers. No PM channel
-is derived from another. All detail charts use solid medium-gray fill and shared axes.
+is derived from another. All detail charts use paper fill and shared axes.
 
 Run ./atmos.exe --capture-pm from desktop/build for independent-channel history,
 all four selections, graph blends, rapid reselection, large readings and missing
@@ -75,9 +75,12 @@ channels. The full geometry, motion and new sensor contract are documented in
 
 GASES uses shared bold typography, a selected-channel badge, equal-size VOC/NOx
 readouts and two animated ribbons. One fixed-size history chart shows the
-selected channel; click a readout to switch. The graph uses the same solid medium-gray
-fill and axes as the other detail pages. Ribbon thickness settles toward the
-live index with a 1.5-second time constant. Current geometry and typography are
+selected channel, whose label is underlined; click a readout to switch. Automatic
+cycling arrives on VOC and switches to NOx halfway through the hold
+(`UI_GAS_SWITCH_TIME`). The graph uses the same paper
+fill and axes as the other detail pages. The top ribbon follows VOC and the bottom
+ribbon NOx: thickness (6 px clean, 14 px at Fair, 22 px at Poor) and mote count
+settle toward the live index with a 1.5-second time constant. Current geometry and typography are
 specified in `../docs/UI_DESIGN_SYSTEM.md`.
 
 After building, from `desktop/build` run `./atmos.exe --capture-gases` for empty,

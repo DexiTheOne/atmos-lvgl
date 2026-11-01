@@ -30,9 +30,10 @@ static HWND window;
    device's PROFILE log line). hw_loop_ms is the device loop overhead between frames
    (frame interval minus frame work, averaged over the run). */
 static bool hw_pace;
-static const double hw_still_ms[5]={70.9,26.4,116.0,70.1,25.2};
-static const double hw_trans_ms[5]={26.0,27.8,28.2,31.0,25.9};
-static const double hw_prerender_ms[5]={71.8,62.2,151.8,96.9,62.0};
+/* Formaldehyde (last entry) is not yet measured: the CO2 page's costs stand in. */
+static const double hw_still_ms[ATMOS_SCENES]={70.9,26.4,116.0,70.1,25.2,26.4};
+static const double hw_trans_ms[ATMOS_SCENES]={26.0,27.8,28.2,31.0,25.9,27.8};
+static const double hw_prerender_ms[ATMOS_SCENES]={71.8,62.2,151.8,96.9,62.0,62.2};
 static const double hw_loop_ms=4.0;
 static void update_title(void);
 static unsigned flushes,transitions_checked;
@@ -130,8 +131,8 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         if(key==VK_SPACE)atmos_toggle_pause();
         else if(key==VK_RIGHT || key==VK_DOWN)atmos_navigate(1);
         else if(key==VK_LEFT || key==VK_UP)atmos_navigate(-1);
-        else if(key>='1' && key<='5')atmos_set_scene((int)key-'1');
-        else if(key>=VK_F1 && key<=VK_F4)atmos_set_scenario((int)key-VK_F1);
+        else if(key>='1' && key<'1'+ATMOS_SCENES)atmos_set_scene((int)key-'1');
+        else if(key>=VK_F1 && key<=VK_F5)atmos_set_scenario((int)key-VK_F1);
         else if(key==VK_TAB || key==VK_OEM_6)atmos_cycle_pm(1);
         else if(key==VK_OEM_4)atmos_cycle_pm(-1);
         else if(key=='A')atmos_toggle_auto();
@@ -184,7 +185,7 @@ static bool parse_rgb(const char *text,uint32_t *out){
 static void update_title(void){
     if(!window)return;
     char title[200];
-    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-5 scenes | F1-F4 scenarios | Space pause | A auto | H hw pace | S save",
+    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | H hw pace | S save",
         hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"");
     SetWindowText(window,title);
 }
@@ -209,10 +210,10 @@ int main(int argc,char **argv){
     if(argc>1 && strcmp(argv[1],"--capture-stress")==0){
         atmos_toggle_auto();
         const atmos_readings cases[]={
-            {NAN,NAN,NAN,NAN,NAN,NAN,NAN,NAN,NAN},
-            {INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY},
-            {9999,123.4,500,100,-10.5,100,82.7,151.9,206.8}};
-        for(int c=0;c<3;c++)for(int page=0;page<5;page++){
+            {NAN,NAN,NAN,NAN,NAN,NAN,NAN,NAN,NAN,NAN,NAN},
+            {INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY,INFINITY},
+            {9999,123.4,500,100,-10.5,100,82.7,151.9,206.8,1013.2f,999.9f}};
+        for(int c=0;c<3;c++)for(int page=0;page<ATMOS_SCENES;page++){
             atmos_set_readings(cases[c]);atmos_set_scene(page);
             for(int i=0;i<80;i++){advance();if(verify_frame())return 28;}
             char path[80];snprintf(path,sizeof path,"stress-%d-%d.bmp",c,page);save_bmp(path);
@@ -221,11 +222,11 @@ int main(int argc,char **argv){
         lv_deinit();return 0;
     }
     if(argc>1 && strcmp(argv[1],"--capture-gases")==0){
-        atmos_toggle_auto();atmos_set_readings((atmos_readings){617,3,128,4,24.2,58,2,4,5});atmos_set_scene(3);
+        atmos_toggle_auto();atmos_set_readings((atmos_readings){617,3,128,4,24.2,58,2,4,5,1013.2f,12});atmos_set_scene(3);
         for(int i=0;i<60;i++)advance();
         save_bmp("gases-empty.bmp");
         for(int sample=0;sample<60;sample++){
-            atmos_set_readings((atmos_readings){617,3,100+60*sin(sample*.12),10+6*sin(sample*.16),24.2,58,2,4,5});
+            atmos_set_readings((atmos_readings){617,3,100+60*sin(sample*.12),10+6*sin(sample*.16),24.2,58,2,4,5,1013.2f,12});
             for(int i=0;i<80;i++)advance();
             if(sample==1)save_bmp("gases-short.bmp");
         }
@@ -234,16 +235,16 @@ int main(int argc,char **argv){
             if(verify_frame())return 25;
             char path[80];snprintf(path,sizeof path,"gases-motion-%02d.bmp",i);save_bmp(path);
         }
-        atmos_set_readings((atmos_readings){1380,30,500,50,24,60,20,40,50});advance();save_bmp("gases-live.bmp");
+        atmos_set_readings((atmos_readings){1380,30,500,50,24,60,20,40,50,1013.2f,12});advance();save_bmp("gases-live.bmp");
         for(int i=0;i<120;i++)advance();
         save_bmp("gases-high.bmp");
         atmos_select_pm_at(130,UI_GAS_LABEL_Y+5);advance();save_bmp("gases-nox.bmp");
         atmos_select_pm_at(50,UI_DETAIL_LABEL_Y+5);advance();save_bmp("gases-voc.bmp");
-        atmos_set_readings((atmos_readings){617,3,NAN,NAN,24,60,2,4,5});
+        atmos_set_readings((atmos_readings){617,3,NAN,NAN,24,60,2,4,5,1013.2f,12});
         for(int i=0;i<80;i++)advance();
         save_bmp("gases-missing.bmp");
         for(int scenario=0;scenario<2;scenario++){
-            atmos_set_readings((atmos_readings){scenario?1380:617,scenario?30:3,scenario?218:78,scenario?27:1,24,60,2,4,5});
+            atmos_set_readings((atmos_readings){scenario?1380:617,scenario?30:3,scenario?218:78,scenario?27:1,24,60,2,4,5,1013.2f,12});
             const int route[]={2,3,4,3,2,3};
             for(int leg=0;leg<6;leg++){
                 atmos_set_scene(route[leg]);
@@ -257,11 +258,11 @@ int main(int argc,char **argv){
         lv_deinit();return 0;
     }
     if(argc>1 && strcmp(argv[1],"--capture-climate")==0){
-        atmos_toggle_auto();atmos_set_readings((atmos_readings){617,3,40,1,24.2,58,2,4,5});atmos_set_scene(4);
+        atmos_toggle_auto();atmos_set_readings((atmos_readings){617,3,40,1,24.2,58,2,4,5,1013.2f,12});atmos_set_scene(4);
         for(int i=0;i<60;i++)advance();
         save_bmp("climate-empty.bmp");
         for(int sample=0;sample<60;sample++){
-            atmos_set_readings((atmos_readings){617,3,40,1,24.2+2*sin(sample*.15),58+12*sin(sample*.19),2,4,5});
+            atmos_set_readings((atmos_readings){617,3,40,1,24.2+2*sin(sample*.15),58+12*sin(sample*.19),2,4,5,1013.2f,12});
             for(int i=0;i<80;i++)advance();
         }
         for(int i=0;i<24;i++){
@@ -269,9 +270,10 @@ int main(int argc,char **argv){
             if(verify_frame())return 24;
             char path[80];snprintf(path,sizeof path,"climate-motion-%02d.bmp",i);save_bmp(path);
         }
-        atmos_select_pm_at(250,UI_CLIMATE_LABEL_Y+5);advance();save_bmp("climate-humidity.bmp");
+        atmos_select_pm_at(50,127);advance();save_bmp("climate-humidity.bmp");
+        atmos_select_pm_at(50,180);advance();save_bmp("climate-pressure.bmp");
         atmos_select_pm_at(50,UI_DETAIL_LABEL_Y+5);advance();save_bmp("climate-temperature.bmp");
-        atmos_set_readings((atmos_readings){1380,30,100,4,-5,95,20,40,50});advance();save_bmp("climate-live.bmp");
+        atmos_set_readings((atmos_readings){1380,30,100,4,-5,95,20,40,50,1013.2f,12});advance();save_bmp("climate-live.bmp");
         lv_deinit();return 0;
     }
     if(argc>1 && strcmp(argv[1],"--capture-pm")==0){
@@ -281,10 +283,10 @@ int main(int argc,char **argv){
         for(int sample=0;sample<60;sample++){
             double base=3.3+1.3*sin(sample*.19)+.6*sin(sample*.71);
             atmos_set_readings((atmos_readings){617,base,40,1,21,45,
-                base*.6+.2*sin(sample*.31),base+1+.3*sin(sample*.27),base+2.6+.8*sin(sample*.13)});
+                base*.6+.2*sin(sample*.31),base+1+.3*sin(sample*.27),base+2.6+.8*sin(sample*.13),1013.2f,12});
             for(int i=0;i<80;i++)advance();
         }
-        atmos_set_readings((atmos_readings){617,3.3,40,1,21,45,2.3,3.9,4.7});
+        atmos_set_readings((atmos_readings){617,3.3,40,1,21,45,2.3,3.9,4.7,1013.2f,12});
         for(int i=0;i<80;i++)advance();
         for(int selected=0;selected<4;selected++){
             atmos_select_pm(selected);
@@ -297,12 +299,12 @@ int main(int argc,char **argv){
         atmos_select_pm(0);advance();atmos_select_pm(2);advance();atmos_select_pm(1);
         for(int i=0;i<20;i++)advance();
         save_bmp("pm-rapid.bmp");
-        atmos_set_readings((atmos_readings){617,123.4,40,1,21,45,82.7,151.9,206.8});
+        atmos_set_readings((atmos_readings){617,123.4,40,1,21,45,82.7,151.9,206.8,1013.2f,12});
         for(int i=0;i<80;i++)advance();
         save_bmp("pm-large.bmp");
         if(verify_frame())return 20;
         atmos_select_pm(2);
-        atmos_set_readings((atmos_readings){617,3.3,40,1,21,45,2.3,NAN,4.7});
+        atmos_set_readings((atmos_readings){617,3.3,40,1,21,45,2.3,NAN,4.7,1013.2f,12});
         for(int i=0;i<80;i++)advance();
         if(verify_frame())return 23;
         save_bmp("pm-missing.bmp");
@@ -310,12 +312,12 @@ int main(int argc,char **argv){
         lv_deinit();return 0;
     }
     if(argc>1 && strcmp(argv[1],"--capture-co2")==0){
-        atmos_toggle_auto();atmos_set_readings((atmos_readings){410,1,40,1,21,45,.6,1.5,2.2});atmos_set_scene(1);
+        atmos_toggle_auto();atmos_set_readings((atmos_readings){410,1,40,1,21,45,.6,1.5,2.2,1013.2f,12});atmos_set_scene(1);
         for(int i=0;i<60;i++)advance();
         save_bmp("co2-empty.bmp");
         for(int sample=0;sample<60;sample++){
             double value=410+sample*3.5+sin(sample*.3)*5;
-            atmos_set_readings((atmos_readings){value,1,40,1,21,45,.6,1.5,2.2});
+            atmos_set_readings((atmos_readings){value,1,40,1,21,45,.6,1.5,2.2,1013.2f,12});
             for(int i=0;i<80;i++)advance();
             if(verify_frame())return 15;
             if(sample==1)save_bmp("co2-short.bmp");
@@ -325,17 +327,49 @@ int main(int argc,char **argv){
             for(int tick=0;tick<8;tick++)advance();
             char path[80];snprintf(path,sizeof path,"co2-motion-%02d.bmp",frame);save_bmp(path);
         }
-        atmos_set_readings((atmos_readings){2500,1,40,1,21,45,.6,1.5,2.2});
+        atmos_set_readings((atmos_readings){2500,1,40,1,21,45,.6,1.5,2.2,1013.2f,12});
         for(int i=0;i<80;i++)advance();
         save_bmp("co2-wide-range.bmp");
         if(verify_frame())return 16;
         puts("CO2: empty, short, full and wide-range histories captured in the approved palette.");
         lv_deinit();return 0;
     }
+    if(argc>1 && strcmp(argv[1],"--capture-hcho")==0){
+        /* Formaldehyde page from zero to the SEN68 maximum, with a short history each. */
+        const float readings[]={0,8,24,40,95,250,999.9f,1000};
+        atmos_toggle_auto();
+        for(int c=0;c<(int)(sizeof readings/sizeof *readings);c++){
+            atmos_set_readings((atmos_readings){617,3,78,1,22.4f,46,2.1f,4,5.3f,1013.2f,readings[c]});
+            atmos_set_scene(5);
+            for(int i=0;i<160;i++)advance();
+            if(verify_frame())return 15;
+            char path[80];snprintf(path,sizeof path,"hcho-%d.bmp",c);save_bmp(path);
+        }
+        puts("Formaldehyde: readings from zero to full scale captured.");
+        lv_deinit();return 0;
+    }
+    if(argc>1 && strcmp(argv[1],"--capture-full-scale")==0){
+        /* Readings at the sensor maximums, then just below the format steps. */
+        const atmos_readings cases[]={{40000,1000,500,500,60,100,1000,1000,1000,1100,1000},
+            {9999,999.9f,499,499,59.9f,99,999.9f,999.9f,999.9f,1013.2f,999.9f}};
+        atmos_toggle_auto();
+        for(int c=0;c<2;c++){
+            atmos_set_readings(cases[c]);
+            for(int i=0;i<62*80;i++)advance();
+            for(int screen=0;screen<ATMOS_SCENES;screen++){
+                atmos_set_scene(screen);
+                for(int i=0;i<80;i++)advance();
+                if(verify_frame())return 24;
+                char path[80];snprintf(path,sizeof path,"full-scale-%d-scene-%d.bmp",c,screen);save_bmp(path);
+            }
+        }
+        puts("Full scale: sensor maximums and near-maximum readings captured on every page.");
+        lv_deinit();return 0;
+    }
     if(argc>1 && strcmp(argv[1],"--capture-dashboard")==0){
         const atmos_readings cases[]={
-            {435,1.2,40,1,20.7,42,.7,1.7,2.3},{950,12.4,40,1,23.1,45,7.8,15.1,20.9},
-            {1200,38.7,100,4,25.5,58,20.1,48.2,64.9},{2500,125.8,100,4,-10.5,58,82.4,157.3,204.6}};
+            {435,1.2,40,1,20.7,42,.7,1.7,2.3,1013.2f,12},{950,12.4,40,1,23.1,45,7.8,15.1,20.9,1013.2f,12},
+            {1200,38.7,100,4,25.5,58,20.1,48.2,64.9,1013.2f,12},{2500,125.8,100,4,-10.5,58,82.4,157.3,204.6,1013.2f,12}};
         atmos_toggle_auto();
         for(int c=0;c<4;c++){
             atmos_set_readings(cases[c]);
@@ -355,7 +389,7 @@ int main(int argc,char **argv){
         for(int scenario=0;scenario<4;scenario++){
             atmos_set_scenario(scenario);
             for(int i=0;i<160;i++)advance();
-            for(int screen=0;screen<5;screen++){
+            for(int screen=0;screen<ATMOS_SCENES;screen++){
                 atmos_set_scene(screen);
                 for(int i=0;i<72;i++){
                     advance();
@@ -378,7 +412,7 @@ int main(int argc,char **argv){
                 if(verify_presentation()){fprintf(stderr,"Windows presentation test failed\n");return 12;}
             }
         }
-        for(int screen=4;screen>=0;screen--){
+        for(int screen=ATMOS_SCENES-1;screen>=0;screen--){
             atmos_set_scene(screen);
             for(int i=0;i<72;i++){advance();if(verify_frame())return 13;}
         }
@@ -386,14 +420,14 @@ int main(int argc,char **argv){
            hold-time pre-rendering of every scene. */
         unsigned prerendered_before=atmos_prerendered_transitions();
         atmos_toggle_auto();
-        for(int i=0;i<2*5*(260+56);i++){
+        for(int i=0;i<2*ATMOS_SCENES*(260+56);i++){
             advance();
             if(verify_frame())return 33;
             const uint8_t *composed=atmos_transition_frame();
             if(composed && memcmp(composed,frame_bits,sizeof frame_bits))return 34;
         }
         atmos_toggle_auto();
-        if(atmos_prerendered_transitions()-prerendered_before<5){
+        if(atmos_prerendered_transitions()-prerendered_before<ATMOS_SCENES){
             fprintf(stderr,"Automatic cycle: only %u pre-rendered transitions\n",atmos_prerendered_transitions()-prerendered_before);return 35;}
         printf("Automatic cycle: %u transitions started from hold-time snapshots; %u clamped fills.\n",
             atmos_prerendered_transitions()-prerendered_before,atmos_clip_overruns());

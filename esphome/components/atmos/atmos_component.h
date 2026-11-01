@@ -60,8 +60,8 @@ class AtmosComponent : public Component {
   // Hardware pacing profile (for the simulator's --hw-pace): average work per frame
   // (REFR_START to REFR_READY) for still frames per scene and transitions per source
   // scene, and the atmos_step() time of hold-time pre-renders per rasterised scene.
-  uint64_t still_cost_[5]{}, trans_cost_[5]{}, pre_cost_[5]{};
-  uint32_t still_n_[5]{}, trans_n_[5]{}, pre_n_[5]{};
+  uint64_t still_cost_[6]{}, trans_cost_[6]{}, pre_cost_[6]{};
+  uint32_t still_n_[6]{}, trans_n_[6]{}, pre_n_[6]{};
   int frame_scene_{0};
 };
 

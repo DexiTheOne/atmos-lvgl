@@ -53,12 +53,12 @@ If the executable is locked during linking, close only this project's simulator 
 
 | Input | Action |
 |---|---|
-| 1â€“5 | Overview, CO2, particles, gases, climate |
+| 1â€“6 | Overview, CO2, particles, gases, climate, formaldehyde |
 | Arrow keys, click, mouse wheel | Navigate |
 | Space | Pause motion and history sampling |
 | A | Toggle automatic cycling |
 | H | Toggle hardware pacing: hold each frame for its measured ESP32-S3 cost (also `--hw-pace`) |
-| F1â€“F4 | Quiet morning, occupied room, cooking, open windows |
+| F1â€“F5 | Quiet morning, occupied room, cooking, open windows, sensor full scale |
 | S | Save 400 Ã— 300 `atmos-frame.bmp` in the process working directory |
 | Escape | Close |
 
@@ -80,13 +80,17 @@ The review script requires Pillow. Python with Pillow is currently available at 
 
 ## Preserve the display and interaction contract
 
+- Layout rules, shared by every page and measured from captured pixels (ink, not font line boxes): titles are centred on capital height in the 30 px badge (title ink y 16–33); content ink spans x 12–387, the same as the header rule; content groups are centred on the band between the header rule and the history panel (y 49–204); stacked label/value/unit rows are `UI_TEXT_GAP` (12 px) apart; rows across columns share baselines; leftover width is split into equal gaps between elements; text is centred with `centered_text()` (ink-based). History charts share one geometry (`chart_geometry()`): no unit or time captions, Y-label ink from x 12, and a "LAST n" pill over the top-right corner. Draw rounded or sloped 1-bit shapes from spans (`pill()`, the chart trace), not anti-aliased LVGL primitives, which lose pixels when thresholded. Re-measure every page after layout changes.
+- Readings: values print in full on every page except the CO2 page, which abbreviates from 10000 ("10.0k"); decimals drop at 1000. Fixed text columns are sized by `widest_number()` for the sensor maximums (`UI_SENSOR_*_MAX`), and chart scales never pass those maximums. `atmos.exe --capture-full-scale` captures every page at and just below the maximums; `--capture-hcho` captures the formaldehyde page from 0 to 1000 ppb.
+- Formaldehyde page (SEN68 HCHO, ppb): the CO2 page's layout. The reading prints with one decimal ("999.9", then "1000" at the 1000 ppb maximum) in the largest font whose widest reading fits the title's ink width. H2CO molecules (C ring, filled O, two H rings) drift and spin in the field to its right; their number rises from one near zero to all ten at `UI_HCHO_FULL` (the 1000 ppb maximum) on a log scale; slot homes were packed offline so molecule ink never touches during motion, and joining or leaving molecules grow or shrink over `UI_HCHO_GROW_TIME`, never popping.
 - Native resolution: 400 Ã— 300, landscape. Present at integer pixel scales with letterboxing.
 - The target panel (Waveshare ESP32-S3-RLCD-4.2, ST7305) is 1-bit black/white. Draw only pure black (ink) and pure white (paper); there is no grey, so chart fill is paper. Under ESPHome, LVGL renders RGB565 and the display driver thresholds to 1 bit; the simulator does the same (luminance above half is paper). Preserve hard opaque transitions; avoid dither, alpha fades, or intermediate tones.
 - The simulator maps ink/paper to display tones only at presentation: defaults `#303030` / `#c6c6c6`, overridable with `--ink=RRGGBB --paper=RRGGBB` or `ATMOS_INK` / `ATMOS_PAPER`.
 - Scene and transition buffers are 15 KB I1 frames. The transition compositor uses integer fixed-point maths only; other model/artwork maths is single-precision `float`, with active-time timestamps kept in `double`.
 - Target animation cadence is 40 fps on desktop. Measure hardware separately.
 - Present completed frames from an offscreen Windows bitmap in one copy. Do not clear the visible display to black between frames. Render the initial LVGL frame before showing the window.
-- Keep scenes flowing through their artwork rather than reverting to generic slideshow transitions: overview â†’ status-circle portal â†’ CO2 â†’ selected live-bubble portal â†’ particles â†’ airflow sweep â†’ gases â†’ horizontal ribbon sweep â†’ climate â†’ inverse status portal â†’ overview.
+- The Air Quality overview is currently left out of the cycle (`CYCLE_FIRST` in `atmos.c`): navigation and automatic cycling run CO2 → … → formaldehyde → CO2 (a sweep), starting on CO2; key 1 still opens the overview. Its code is kept.
+- Keep scenes flowing through their artwork rather than reverting to generic slideshow transitions: overview â†’ status-circle portal â†’ CO2 â†’ selected live-bubble portal â†’ particles â†’ airflow sweep â†’ gases â†’ horizontal ribbon sweep â†’ climate â†’ horizontal ribbon sweep â†’ formaldehyde â†’ inverse status portal â†’ overview.
 - Each transition rasterises its two scenes once, at its first frame (for device speed): the outgoing scene at the transition's start time and the incoming scene at its end time, so artwork is still during travel and live drawing resumes without a jump. Preserve the selected bubble anchor (taken from the matching snapshot), keep gas/climate history ribbons continuous, and support reverse navigation. Current scene holds are 6.5 seconds; portals take 1.4 seconds and sweeps 1.2 seconds. Timing may be deliberately tuned for a requested animation change.
 - Navigation during movement queues the latest requested destination. Pause/minimize freezes motion and sampling time.
 - History starts empty, samples every two active seconds, retains two minutes, and never invents historical readings. Scenario changes preserve the existing samples.
@@ -109,7 +113,7 @@ The device build is an ESPHome external component, so `atmos.c` must compile wit
 - **Direct 1-bit fills.** `rect()` with radius 0 on an I1 layer writes bits directly (`direct_fill()`), after `sync_layer()` runs any queued LVGL tasks so ordering is kept. LVGL draw tasks cost a heap allocation and dispatch each, which dominated device frame time for span-built artwork. Prefer spans over many tiny LVGL shapes in hot paths.
 - **Guard float-to-int casts.** NaN or huge values cast to `int` differ by CPU (x86 gives `INT_MIN`, Xtensa `INT_MAX`) and can overflow later arithmetic. A NaN ribbon tip crashed the device while the simulator looked fine. Clamp inputs to `pow`/`sqrt` and reject far-off coordinates before arithmetic.
 - **SPI clock.** The benchmark runs the ST7305 at 40 MHz (reported working by a community build; artefacts near 60 MHz). Verified clean on the real panel on 2026-10-30; if artefacts appear, fall back to 20 MHz or 10 MHz. At 10 MHz the push is 12.6 ms per frame instead of 3.6 ms.
-- **Redraw only what moves.** Still scenes invalidate only `animated_area(scene)`; readings, history samples, selections, the PM chart blend and scene changes set `full_dirty` for a full redraw. When adding motion, extend that scene's area. The self-test fails if anything animates outside it.
+- **Redraw only what moves.** Still scenes invalidate only `animated_area(scene)`; readings, history samples, selections, the PM chart blend and scene changes set `full_dirty` for a full redraw. When adding motion, extend that scene's area. The self-test fails if anything animates outside it. The particles scene (dotted perspective floor with drifting dust, sized and counted from PM1/2.5/4/10) advances its drift in whole ticks and redraws only `UI_PM_FIELD_FPS` (20) times a second.
 - **Per-frame work is the bottleneck on device, not LVGL's pixel fill.** The scene draw functions run in full even when LVGL clips to a small area, so keep per-pixel loops free of trig and other calls that depend only on the frame or column; compute those once per frame.
 - **Memory.** All frame buffers are 1-bit: LVGL's display frame (15 KB), two scene canvases and the transition frame (15 KB each), all in internal RAM. LVGL's own allocations (draw tasks, layers, glyph caches) go to PSRAM on the device.
 
