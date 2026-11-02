@@ -46,7 +46,7 @@ bool atmos_auto(void);
 void atmos_set_hold(float seconds);
 float atmos_hold(void);
 /* Time span the history charts show. Shrinking it discards older samples; growing it
-   lets the chart fill up to the new span. Samples are taken every span/60 (at least 2 s). */
+   lets the chart fill up to the new span. Samples start every 2 s and stretch up to span/60 as history accumulates. */
 #define ATMOS_HISTORY_MIN 60.0f
 #define ATMOS_HISTORY_MAX 86400.0f
 void atmos_set_history_window(float seconds);

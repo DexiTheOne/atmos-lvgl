@@ -29,16 +29,23 @@ static const atmos_readings profiles[] = {
 static atmos_readings sensor, origin, target;
 #define HISTORY_CAP 64
 static sample history[HISTORY_CAP];
-/* Seconds held per page, and the history span (sampled every span/60, at least 2 s). */
+/* Seconds held per page, and the history span. */
 static float hold=6.5f,history_window=120;
-static double sample_every(void){return fmax(2,history_window/60.0);}
 static int count, scene, destination, queued=-1, scenario;
+static double t;
+/* Sampling starts every 2 s and stretches with the history held (about 30 samples
+   across it) up to span/60, so a long span fills in from the first seconds instead
+   of waiting a whole interval. The buffer thins evenly when it overflows. */
+static double sample_every(void){
+    double held=count?t-history[0].at:0;
+    return fmax(2,fmin(held/30,history_window/60.0));
+}
 static int gas_selected,climate_selected;
 static void select_gas(int lane);
 static void select_climate(int row);
 static int pending_advance;
 static int gas_divider_x=UI_GAS_DIVIDER_X; /* Set by draw_gas_detail() for hit-testing. */
-static double t, changed, next_sample, age, movement;
+static double changed, next_sample, age, movement;
 /* Time the scene artwork is drawn at: t for live frames; a transition snapshots the
    outgoing scene at its start time and the incoming scene at its end time. */
 static double anim_t;
@@ -2032,7 +2039,7 @@ int atmos_self_test(void){
         /* Shrinking discards samples older than the new span. */
         atmos_set_history_window(60);
         if(count<2 || t-history[1].at>=60)return 31;
-        /* Growing lets the chart fill to the new span (10 s samples). */
+        /* Growing lets the chart fill to the new span. */
         atmos_set_history_window(600);int held=count;
         for(int i=0;i<4000;i++)atmos_step(.1f);
         if(count<=held || count>HISTORY_CAP || t-history[0].at<380)return 32;
@@ -2046,7 +2053,16 @@ int atmos_self_test(void){
         if(sensor.co2>=500 && (!warning() || strcmp(rating_text(rate_overall()),"Terrible")))return 35;
         atmos_set_bands(ATMOS_CO2,saved,saved_n);
     }
-    puts("Controls: reading selection, hold bound, history span shrink/grow and rating bands passed.");
+    {
+        /* A long span still samples within seconds of a fresh start. */
+        int kept=count;sample saved[HISTORY_CAP];memcpy(saved,history,sizeof saved);
+        double next=next_sample;count=0;next_sample=t+2;
+        atmos_set_history_window(3600);
+        for(int i=0;i<200;i++)atmos_step(.1f);
+        if(count<5)return 36;
+        atmos_set_history_window(120);memcpy(history,saved,sizeof saved);count=kept;next_sample=next;
+    }
+    puts("Controls: reading selection, hold bound, history span shrink/grow, fast fill of long spans and rating bands passed.");
     puts("Prerender: hold-time transition snapshots match fresh renders and are used.");
     puts("PM: independent history channels, rapid selection, fixed transition window and missing-sample gaps passed.");
     puts("Model: sampling, history, pruning, navigation, pause, visibility and external data passed.");
