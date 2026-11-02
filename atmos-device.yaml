@@ -1,0 +1,135 @@
+# Atmos air-quality display on a Waveshare ESP32-S3-RLCD-4.2, built straight from
+# GitHub. Copy this file into your ESPHome config directory, add the secrets below
+# to its secrets.yaml, link your sensors under atmos: sensors:, then install.
+#
+# secrets.yaml: wifi_ssid, wifi_password, api_encryption_key (openssl rand -base64 32),
+# ota_password.
+
+esphome:
+  name: atmos
+  friendly_name: Atmos
+  # On Windows without long paths, ESP-IDF object paths pass 260 characters: add a
+  # short build_path (e.g. C:/ESPHome/build/atmos) and set ESPHOME_ESP_IDF_PREFIX.
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+  hardware_uart: USB_SERIAL_JTAG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# The UI component and its ST7305 display driver. Pin a tag or commit with @ for
+# reproducible builds (github://DexiTheOne/atmos-lvgl@<ref>).
+external_components:
+  - source: github://DexiTheOne/atmos-lvgl@main
+    components: [atmos, st7305_rlcd]
+
+spi:
+  clk_pin: GPIO11
+  mosi_pin: GPIO12
+
+display:
+  - platform: st7305_rlcd
+    id: panel
+    model: WAVESHARE_400X300
+    data_rate: 40MHz  # verified on the panel; fall back to 20MHz if artefacts appear
+    cs_pin: GPIO40
+    dc_pin: GPIO5
+    reset_pin: GPIO41
+    auto_clear_enabled: false
+    update_interval: never
+
+atmos:
+  display_id: panel
+  frame_period: 59ms  # frame-rate cap, about 17 fps
+
+  # Debug: log fps, frame times, CPU share and heap every report_interval.
+  frame_stats: false
+  report_interval: 10s
+
+  # Data source per reading: the id of any ESPHome sensor (any platform, or a
+  # homeassistant sensor). Keys: co2, voc, nox, formaldehyde, pm1, pm2_5, pm4, pm10,
+  # temperature, humidity, pressure. Units: CO2 ppm, VOC/NOx index, formaldehyde
+  # ppb, PM ug/m3, temperature degC, humidity %, pressure hPa (convert with filters).
+  # Without any linked sensor the display runs demo data.
+  # sensors:
+  #   co2: my_co2
+  #   pm2_5: my_pm25
+  #   temperature: my_temperature
+  #   humidity: my_humidity
+
+  # Home Assistant entities (each optional).
+  reading_select:
+    name: Reading
+  auto_advance:
+    name: Auto advance
+  hold_time:
+    name: Page hold time  # seconds, 2-600
+    max_value: 120
+    initial_value: 6.5
+  history_time:
+    name: History time  # minutes, 1-1440
+    max_value: 240
+    initial_value: 2
+
+  # Badge text per reading: the first band whose [min, max) holds the reading wins;
+  # omit min or max for an open end. level orders severity (default: position); the
+  # overview shows the worst and warns from level 2. Unlisted readings keep Good/Fair/Poor.
+  # ratings:
+  #   co2:
+  #     - {max: 800, text: Good}
+  #     - {min: 800, max: 1200, text: Fair}
+  #     - {min: 1200, text: Poor}
+
+# The board's two keys: step the underlined reading, then the page.
+binary_sensor:
+  - platform: gpio
+    id: key_left
+    name: Left key
+    pin:
+      number: GPIO18
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_press:
+      - atmos.previous
+  - platform: gpio
+    id: key_right
+    name: Right key
+    pin:
+      number: GPIO0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+      ignore_strapping_warning: true
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_press:
+      - atmos.next

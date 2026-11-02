@@ -1,4 +1,4 @@
-#define WIN32_LEAN_AND_MEAN
+﻿#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -131,7 +131,10 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         if(key==VK_SPACE)atmos_toggle_pause();
         else if(key==VK_RIGHT || key==VK_DOWN)atmos_navigate(1);
         else if(key==VK_LEFT || key==VK_UP)atmos_navigate(-1);
-        else if(key>='1' && key<'1'+ATMOS_SCENES)atmos_set_scene((int)key-'1');
+        /* The device's two keys: reading by reading, then page by page. */
+        else if(key==VK_OEM_PERIOD)atmos_advance(1);
+        else if(key==VK_OEM_COMMA)atmos_advance(-1);
+        else if(key>='1' && key<'1'+ATMOS_SCENES)atmos_set_scene(atmos_page((int)key-'1'));
         else if(key>=VK_F1 && key<=VK_F5)atmos_set_scenario((int)key-VK_F1);
         else if(key==VK_TAB || key==VK_OEM_6)atmos_cycle_pm(1);
         else if(key==VK_OEM_4)atmos_cycle_pm(-1);
@@ -357,7 +360,7 @@ int main(int argc,char **argv){
             atmos_set_readings(cases[c]);
             for(int i=0;i<62*80;i++)advance();
             for(int screen=0;screen<ATMOS_SCENES;screen++){
-                atmos_set_scene(screen);
+                atmos_set_scene(atmos_page(screen));
                 for(int i=0;i<80;i++)advance();
                 if(verify_frame())return 24;
                 char path[80];snprintf(path,sizeof path,"full-scale-%d-scene-%d.bmp",c,screen);save_bmp(path);
@@ -390,7 +393,7 @@ int main(int argc,char **argv){
             atmos_set_scenario(scenario);
             for(int i=0;i<160;i++)advance();
             for(int screen=0;screen<ATMOS_SCENES;screen++){
-                atmos_set_scene(screen);
+                atmos_set_scene(atmos_page(screen));
                 for(int i=0;i<72;i++){
                     advance();
                     if(verify_frame()){fprintf(stderr,"Invalid palette or empty frame\n");return 10;}
@@ -413,7 +416,7 @@ int main(int argc,char **argv){
             }
         }
         for(int screen=ATMOS_SCENES-1;screen>=0;screen--){
-            atmos_set_scene(screen);
+            atmos_set_scene(atmos_page(screen));
             for(int i=0;i<72;i++){advance();if(verify_frame())return 13;}
         }
         /* Automatic cycling through every transition twice, as on the device: exercises

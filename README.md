@@ -4,6 +4,20 @@ The native implementation is now in [`desktop/`](desktop/README.md). It compiles
 
 The desktop migration includes all five scenes and the shared sensor/history model. The native journey zooms through the overview status circle and a CO2 bubble, sweeps from particles into gases, and carries continuous ribbons horizontally into climate before returning through the status portal. Typography, ribbon geometry, and some animation details still differ from the browser reference. Hardware integration and hardware performance validation remain future work.
 
+## Build a device with ESPHome
+
+The UI runs on a Waveshare ESP32-S3-RLCD-4.2 as an ESPHome external component. Reference it straight from GitHub:
+
+```yaml
+external_components:
+  - source: github://DexiTheOne/atmos-lvgl@main
+    components: [atmos, st7305_rlcd]
+```
+
+[`atmos-device.yaml`](atmos-device.yaml) is a complete device configuration: copy it into your ESPHome config directory, add `wifi_ssid`, `wifi_password`, `api_encryption_key` and `ota_password` to `secrets.yaml`, link your sensors under `atmos: sensors:` and install. Every `atmos:` option (sensor links, Home Assistant entities, rating bands, `frame_stats` debug logging) is described in [`esphome/README.md`](esphome/README.md).
+
+## Browser design reference
+
 A local animated air-quality display preview. The surrounding webpage only supplies preview controls.
 
 ## Run
@@ -26,7 +40,7 @@ Open http://localhost:4173. No dependencies or network connection are needed. Yo
 
 ## Controls and scenes
 
-The journey starts directly on the overview and its animated status symbol. A 1.4-second zoom through the active checkmark or warning triangle reveals the actual detail screen. CO₂ → particles → gases → climate move as adjoining pages in 1.1-second vertical scrolls. Climate returns through the inverse portal. Each settled scene holds for 6.5 seconds. There are no title cards or intermediate animation screens. Navigation during movement queues only the latest requested destination.
+The native simulator in `desktop/` is the current product UI. Its cycle runs CO₂ → gases → formaldehyde → particles → climate → CO₂ (the overview is out of the cycle for now), and each page leaves through its own artwork: bubble portal, ribbons swell, atom portal, dust bloom and droplet fall. Each settled scene holds for 6.5 seconds. There are no title cards or intermediate animation screens. Navigation during movement queues only the latest requested destination.
 
 All detail screens reserve the lower 120 pixels for animated history, with older samples on the left and NOW on the right. The shared window holds two minutes of samples collected every two active seconds. It starts empty, reports the available duration while filling, and never invents past measurements. Scenario changes continue the same history. Pause and hidden tabs freeze both motion and history time.
 

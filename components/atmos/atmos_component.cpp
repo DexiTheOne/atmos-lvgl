@@ -53,16 +53,115 @@ void AtmosComponent::setup() {
   lv_display_set_buffers(this->disp_, frame_buf, nullptr, sizeof frame_buf, LV_DISPLAY_RENDER_MODE_DIRECT);
   lv_display_set_flush_cb(this->disp_, flush_cb_);
   lv_display_set_user_data(this->disp_, this);
-  for (auto code : {LV_EVENT_REFR_START, LV_EVENT_REFR_READY})
-    lv_display_add_event_cb(this->disp_, display_event_, code, this);
+  if (this->frame_stats_)
+    for (auto code : {LV_EVENT_REFR_START, LV_EVENT_REFR_READY})
+      lv_display_add_event_cb(this->disp_, display_event_, code, this);
   this->report_start_ms_ = millis();
   this->set_timeout("frame", 0, [this]() { this->frame_(); });
 }
 
+void AtmosComponent::advance(int direction) {
+  if (!this->started_)
+    return;  // the UI is created on the first frame
+  atmos_advance(direction);
+}
+
+void AtmosComponent::select_reading(int reading) {
+  if (!this->started_) {
+    this->pending_reading_ = reading;
+    return;
+  }
+  atmos_select_reading(reading);
+}
+
+void AtmosComponent::set_auto(bool on) {
+  this->auto_ = on;
+  if (this->started_)
+    atmos_set_auto(on);
+}
+
+// Hold, history span and bands are model settings that atmos_init() keeps, so they
+// apply directly even before the UI starts.
+void AtmosComponent::set_hold(float seconds) { atmos_set_hold(seconds); }
+void AtmosComponent::set_history_window(float seconds) { atmos_set_history_window(seconds); }
+
+void AtmosComponent::add_band(int reading, float min, float max, int level, const char *text) {
+  static atmos_band bands[ATMOS_READINGS][ATMOS_BANDS_MAX];
+  static int counts[ATMOS_READINGS];
+  if (reading < 0 || reading >= ATMOS_READINGS || counts[reading] >= ATMOS_BANDS_MAX)
+    return;
+  atmos_band &b = bands[reading][counts[reading]++];
+  b.min = min;
+  b.max = max;
+  b.level = level;
+  snprintf(b.text, sizeof b.text, "%s", text);
+  atmos_set_bands(reading, bands[reading], counts[reading]);
+}
+
+void AtmosComponent::set_sensor(int reading, sensor::Sensor *s) {
+  if (reading < 0 || reading >= ATMOS_READINGS)
+    return;
+  if (!this->has_sensors_)
+    std::fill(std::begin(this->values_), std::end(this->values_), NAN);
+  this->has_sensors_ = this->values_dirty_ = true;
+  s->add_on_state_callback([this, reading](float value) {
+    this->values_[reading] = value;
+    this->values_dirty_ = true;
+  });
+}
+
+/* All linked readings in one atmos_set_readings() per frame, however many sensors reported. */
+void AtmosComponent::push_readings_() {
+  const float *v = this->values_;
+  atmos_readings r{};
+  r.co2 = v[ATMOS_CO2];
+  r.voc = v[ATMOS_VOC];
+  r.nox = v[ATMOS_NOX];
+  r.hcho = v[ATMOS_HCHO];
+  r.pm1 = v[ATMOS_PM1];
+  r.pm = v[ATMOS_PM25];
+  r.pm4 = v[ATMOS_PM4];
+  r.pm10 = v[ATMOS_PM10];
+  r.temp = v[ATMOS_TEMPERATURE];
+  r.rh = v[ATMOS_HUMIDITY];
+  r.pressure = v[ATMOS_PRESSURE];
+  atmos_set_readings(r);
+  this->values_dirty_ = false;
+}
+
+void AtmosAutoSwitch::setup() {
+  optional<bool> initial = this->get_initial_state_with_restore_mode();
+  this->write_state(initial.has_value() ? *initial : true);
+}
+
+void AtmosAutoSwitch::write_state(bool state) {
+  this->parent_->set_auto(state);
+  this->publish_state(state);
+}
+
+void AtmosNumber::setup() {
+  float value = this->initial_;
+  this->pref_ = this->make_entity_preference<float>();
+  float restored;
+  if (this->pref_.load(&restored) && std::isfinite(restored))
+    value = restored;
+  this->control(value);
+}
+
+void AtmosNumber::control(float value) {
+  value = clamp(value, this->traits.get_min_value(), this->traits.get_max_value());
+  if (this->history_)
+    this->parent_->set_history_window(value * this->scale_);
+  else
+    this->parent_->set_hold(value * this->scale_);
+  this->pref_.save(&value);
+  this->publish_state(value);
+}
+
 void AtmosComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "Atmos UI: own LVGL %d.%d.%d, 1-bit display, frame period %u us, report every %u ms",
+  ESP_LOGCONFIG(TAG, "Atmos UI: own LVGL %d.%d.%d, 1-bit display, frame period %u us, frame stats %s every %u ms",
                 LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH, (unsigned) this->period_us_,
-                (unsigned) this->report_ms_);
+                ONOFF(this->frame_stats_), (unsigned) this->report_ms_);
 }
 
 /* Direct mode: px_map is the whole frame; only the rows LVGL redrew are converted.
@@ -125,8 +224,12 @@ void AtmosComponent::frame_() {
   uint32_t now = micros();
   if (!this->started_) {
     atmos_init();
-    atmos_set_clock([]() -> uint32_t { return micros(); });
+    if (this->frame_stats_)
+      atmos_set_clock([]() -> uint32_t { return micros(); });
     this->started_ = true;
+    atmos_set_auto(this->auto_);
+    if (this->pending_reading_ >= 0)
+      atmos_select_reading(this->pending_reading_);
     this->next_step_us_ = now;
     this->last_report_ms_ = millis();
     ESP_LOGI(TAG, "Atmos UI started; internal free %u, PSRAM free %u",
@@ -139,6 +242,8 @@ void AtmosComponent::frame_() {
     uint32_t late = now - this->next_step_us_;
     uint32_t steps = 1 + late / this->period_us_;
     this->missed_steps_ += steps - 1;
+    if (this->has_sensors_ && this->values_dirty_)
+      this->push_readings_();
     uint32_t step_start = micros();
     atmos_step(steps * this->period_us_ / 1e6);
     int pre = atmos_step_prerendered();
@@ -150,8 +255,13 @@ void AtmosComponent::frame_() {
     lv_refr_now(this->disp_);  // render now, not on LVGL's own refresh timer
   }
   lv_timer_handler();
+  int reading = atmos_reading();  // -1 on the overview
+  if (this->reading_select_ != nullptr && reading >= 0 && reading != this->published_reading_) {
+    this->published_reading_ = reading;
+    this->reading_select_->publish_state((size_t) reading);
+  }
   bool moving = atmos_is_moving();
-  if (this->was_moving_ && !moving) {
+  if (this->frame_stats_ && this->was_moving_ && !moving) {
     this->transition_index_++;
     char name[24];
     snprintf(name, sizeof name, "trans #%u", (unsigned) this->transition_index_);
@@ -159,7 +269,7 @@ void AtmosComponent::frame_() {
     this->current_transition_ = FrameStats();
   }
   this->was_moving_ = moving;
-  if (millis() - this->last_report_ms_ >= this->report_ms_) {
+  if (this->frame_stats_ && millis() - this->last_report_ms_ >= this->report_ms_) {
     this->last_report_ms_ = millis();
     this->report_();
   }

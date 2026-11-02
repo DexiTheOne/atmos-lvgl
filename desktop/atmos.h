@@ -14,7 +14,12 @@ typedef struct {
 void atmos_init(void);
 void atmos_step(double seconds);
 void atmos_navigate(int direction);
+/* Left/right hardware key: next/previous reading on the page, then the next/previous page. */
+void atmos_advance(int direction);
 void atmos_set_scene(int scene);
+/* Scene number at a page position (0 = overview, then CO2, gases, formaldehyde,
+   particles, climate): the order of navigation, keys 1-6 and a page selector. */
+int atmos_page(int position);
 void atmos_set_scenario(int scenario);
 void atmos_toggle_pause(void);
 void atmos_toggle_auto(void);
@@ -26,6 +31,35 @@ void atmos_cycle_pm(int direction);
 bool atmos_select_pm_at(int x,int y);
 /* Number of scenes. */
 #define ATMOS_SCENES 6
+/* Readings, in page order: what a reading selector lists. */
+enum { ATMOS_CO2, ATMOS_VOC, ATMOS_NOX, ATMOS_HCHO, ATMOS_PM1, ATMOS_PM25, ATMOS_PM4, ATMOS_PM10,
+       ATMOS_TEMPERATURE, ATMOS_HUMIDITY, ATMOS_PRESSURE, ATMOS_READINGS };
+/* Move to the page showing a reading and underline/chart it. Restarts the hold. */
+void atmos_select_reading(int reading);
+/* The reading currently underlined/charted (the destination's while moving). */
+int atmos_reading(void);
+void atmos_set_auto(bool on);
+bool atmos_auto(void);
+/* Seconds each page (split between its readings) is held before automatic cycling moves on. */
+#define ATMOS_HOLD_MIN 2.0f
+#define ATMOS_HOLD_MAX 600.0f
+void atmos_set_hold(float seconds);
+float atmos_hold(void);
+/* Time span the history charts show. Shrinking it discards older samples; growing it
+   lets the chart fill up to the new span. Samples are taken every span/60 (at least 2 s). */
+#define ATMOS_HISTORY_MIN 60.0f
+#define ATMOS_HISTORY_MAX 86400.0f
+void atmos_set_history_window(float seconds);
+float atmos_history_window(void);
+/* Rating bands: a reading inside [min, max] shows `text` in its page's badge. NAN
+   leaves that end open; the first matching band wins. level orders severity for
+   the overview (worst wins) and its warning (level >= 2). Readings with no
+   matching band show "--". May be called before atmos_init(). */
+#define ATMOS_BANDS_MAX 8
+#define ATMOS_BAND_TEXT 16
+typedef struct { float min, max; int level; char text[ATMOS_BAND_TEXT]; } atmos_band;
+/* Returns false (and changes nothing) for a bad reading or more than ATMOS_BANDS_MAX bands. */
+bool atmos_set_bands(int reading, const atmos_band *bands, int n);
 int atmos_self_test(void);
 /* Test hook: the 1-bit frame (50-byte MSB-first rows, 1 = paper) composed for
    the last transition draw, or NULL when no transition was drawn. */

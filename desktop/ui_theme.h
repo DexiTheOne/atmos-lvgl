@@ -131,7 +131,9 @@
 #define UI_PM_LABEL_SIZE 12
 #define UI_PM_CARD_VALUE_SIZE 24
 #define UI_PM_CARD_UNIT_SIZE 12
-#define UI_PM_TRANSITION_TIME .4f
+/* Seconds a history chart takes to ease between readings when the selection changes. */
+#define UI_CHART_BLEND_TIME .8f
+#define UI_PM_TRANSITION_TIME UI_CHART_BLEND_TIME
 /* Particle field: dotted floor grid with drifting dust, redrawn UI_PM_FIELD_FPS times a second. */
 #define UI_PM_FIELD_LEFT (UI_MARGIN+2*(UI_PM_CARD_WIDTH+UI_PM_CARD_GAP)) /* PM4 card left edge, x 202. */
 #define UI_PM_FIELD_RIGHT 387 /* Right margin. */
@@ -247,7 +249,6 @@
 #define UI_GAS_LABEL_SIZE UI_FONT_SECONDARY
 #define UI_GAS_UNDERLINE 2
 #define UI_GAS_UNDERLINE_GAP 4
-#define UI_GAS_SWITCH_TIME 3.25f
 #define UI_GAS_RIBBON_LABEL_X 230
 #define UI_GAS_RIBBON_LABEL_Y 45
 #define UI_GAS_RIBBON_LEFT (UI_GAS_SIDE_INSET+UI_GAS_COLUMN_STEP+UI_GAS_COLUMN_WIDTH+UI_GAS_COLUMN_GAP)

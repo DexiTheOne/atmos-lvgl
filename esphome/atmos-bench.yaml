@@ -34,7 +34,7 @@ logger:
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
 
 # XIAO pins: D8 = GPIO7 (SCK), D10 = GPIO9 (MOSI), D1-D3 = GPIO2-4. Nothing attached.
 spi:
@@ -57,4 +57,5 @@ display:
 atmos:
   display_id: panel
   frame_period: 59ms  # about 17 fps cap
+  frame_stats: true  # benchmark logs (bench.ps1)
   report_interval: 10s

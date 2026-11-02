@@ -23,10 +23,24 @@ logger:
   level: INFO
   hardware_uart: USB_SERIAL_JTAG
 
+# Home Assistant. Credentials come from secrets.yaml beside this file (gitignored):
+#   wifi_ssid, wifi_password, api_encryption_key (32-byte base64), ota_password.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
 external_components:
   - source:
       type: local
-      path: components
+      path: ../components
 
 # Waveshare ESP32-S3-RLCD-4.2 display pins.
 spi:
@@ -49,5 +63,86 @@ display:
 atmos:
   display_id: panel
   frame_period: 59ms  # about 17 fps cap
+  frame_stats: true  # benchmark logs (bench.ps1)
   report_interval: 10s
+  # Drop-down of the readings: choosing one moves to its page and underlines/charts it.
+  # It follows the display as the keys and automatic cycling move the selection.
+  reading_select:
+    name: Reading
+  # Automatic cycling through the readings (restored after a reboot).
+  auto_advance:
+    name: Auto advance
+  # Seconds each page is held (split between its readings) before moving on.
+  # min_value/max_value may narrow the 2-600 s the UI accepts.
+  hold_time:
+    name: Page hold time
+    max_value: 120
+    initial_value: 6.5
+  # Minutes of history the charts show (1-1440). Shrinking it discards older samples;
+  # growing it lets the chart fill up to the new span.
+  history_time:
+    name: History time
+    max_value: 240
+    initial_value: 2
+  # Data source per reading: the id of any ESPHome sensor (any platform, or a
+  # homeassistant sensor). Keys: co2, voc, nox, formaldehyde, pm1, pm2_5, pm4, pm10,
+  # temperature, humidity, pressure. Once any is linked the demo data stops and
+  # unlinked readings show "--". Expected units: CO2 ppm, VOC/NOx index,
+  # formaldehyde ppb, PM ug/m3, temperature degC, humidity %, pressure hPa; convert
+  # others with sensor filters (e.g. multiply). Without this block the demo runs.
+  # sensors:
+  #   co2: my_co2
+  #   pm2_5: my_pm25
+  #   temperature: my_temperature
+  #   humidity: my_humidity
+  # Badge text per reading: the first band whose [min, max) holds the reading wins;
+  # leave min or max out for an open end. Any text up to 15 characters. level orders
+  # severity (default: the band's position): the overview shows the worst, and level 2
+  # or more raises its warning. Readings not listed keep the built-in Good/Fair/Poor:
+  # co2, voc, nox, formaldehyde, pm1, pm2_5, pm4, pm10, temperature, humidity, pressure.
+  ratings:
+    co2:
+      - {max: 800, text: Good}
+      - {min: 800, max: 1200, text: Fair}
+      - {min: 1200, max: 2000, text: Poor}
+      - {min: 2000, text: Terrible, level: 3}
+    temperature:
+      - {min: 20, max: 25, text: Good, level: 0}
+      - {max: 18, text: Cold, level: 2}
+      - {max: 20, text: Cool, level: 1}
+      - {max: 27, text: Warm, level: 1}
+      - {text: Hot, level: 2}
 
+# The board's two keys (active low). No touch, so they step the underlined reading
+# within a page, then move to the neighbouring page. GPIO0 is also the boot
+# strapping pin: holding the right key at reset enters the bootloader.
+binary_sensor:
+  - platform: gpio
+    id: key_left
+    name: Left key
+    pin:
+      number: GPIO18
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_press:
+      - atmos.previous
+  - platform: gpio
+    id: key_right
+    name: Right key
+    pin:
+      number: GPIO0
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+      ignore_strapping_warning: true
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_press:
+      - atmos.next

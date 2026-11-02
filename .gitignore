@@ -4,3 +4,6 @@ desktop/vendor/
 esphome/.esphome/
 esphome/secrets.yaml
 esphome/*.log
+# Review sheets and GIFs: regenerate with desktop/render_review.py.
+artifacts/
+.esphome/

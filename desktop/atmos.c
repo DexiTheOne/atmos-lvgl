@@ -1,4 +1,4 @@
-#include "atmos.h"
+﻿#include "atmos.h"
 #if LVGL_VERSION_MAJOR!=9
 #error "atmos requires LVGL 9.x"
 #endif
@@ -27,10 +27,16 @@ static const atmos_readings profiles[] = {
     {40000,1000,500,500,60,100,1000,1000,1000,1100,1000}
 };
 static atmos_readings sensor, origin, target;
-static sample history[62];
+#define HISTORY_CAP 64
+static sample history[HISTORY_CAP];
+/* Seconds held per page, and the history span (sampled every span/60, at least 2 s). */
+static float hold=6.5f,history_window=120;
+static double sample_every(void){return fmax(2,history_window/60.0);}
 static int count, scene, destination, queued=-1, scenario;
 static int gas_selected,climate_selected;
 static void select_gas(int lane);
+static void select_climate(int row);
+static int pending_advance;
 static int gas_divider_x=UI_GAS_DIVIDER_X; /* Set by draw_gas_detail() for hit-testing. */
 static double t, changed, next_sample, age, movement;
 /* Time the scene artwork is drawn at: t for live frames; a transition snapshots the
@@ -55,7 +61,7 @@ static bool paused, automatic=true, hidden, external_data, moving;
 static int pm_selected=1,pm_snapshot_count;
 static float pm_from_weights[4]={0,1,0,0},pm_to_weights[4]={0,1,0,0};
 static const char *pm_labels[]={"PM1.0","PM2.5","PM4.0","PM10"};
-static sample pm_snapshot[62];
+static sample pm_snapshot[64];
 static float pm_blend_age=.4f,pm_density;
 static int64_t pm_last_tick=-1; /* particle drift tick last redrawn */
 static float gas_intensity[2];
@@ -84,8 +90,11 @@ static uint8_t axis_label_buf[I1_PALETTE+AXIS_W/8*AXIS_H];
 static uint8_t scene_buf[2][I1_PALETTE+FRAME_BYTES];
 static uint8_t transition_bits[FRAME_BYTES];
 static bool transition_drawn;
-/* The Air Quality overview (scene 0) is left out of the page cycle for now;
-   its code stays, and key 1 still selects it directly. */
+/* Page order: scene numbers by position, grouped from "open a window?" to comfort:
+   overview, CO2, gases, formaldehyde, particles, climate. The overview (position 0)
+   is left out of the cycle for now (CYCLE_FIRST); its code stays, and key 1 still
+   selects it directly. Scene numbers themselves are fixed identifiers. */
+static const int page_order[ATMOS_SCENES]={0,1,3,5,2,4};
 #define CYCLE_FIRST 1
 #define SCENE_BITS(i) (scene_buf[i]+I1_PALETTE)
 static lv_layer_t *layer;
@@ -104,48 +113,66 @@ static float gas_ribbon_top;
 static float clamp(float v,float lo,float hi){return v<lo?lo:v>hi?hi:v;}
 static float ease(float v){v=clamp(v,0,1);return v*v*(3-2*v);}
 static float mix(float a,float b,float p){return a+(b-a)*p;}
-/* Per-measurement rating shown in each page's badge. Limits live in ui_theme.h
-   and are placeholders until tuned. Missing readings have no rating. */
-typedef enum { RATING_NONE, RATING_GOOD, RATING_FAIR, RATING_POOR } rating;
-static const char *rating_text(rating r){
-    static const char *text[]={"--","Good","Fair","Poor"};
-    return text[r];
-}
-static rating rate_upper(float v,float fair,float poor){
-    if(!isfinite(v) && !(isinf(v) && v>0))return RATING_NONE;
-    return v>=poor?RATING_POOR:v>=fair?RATING_FAIR:RATING_GOOD;
-}
-static rating rate_band(float v,float good_lo,float good_hi,float fair_lo,float fair_hi){
-    if(!isfinite(v) && !isinf(v))return RATING_NONE;
-    if(v>=good_lo && v<=good_hi)return RATING_GOOD;
-    return v>=fair_lo && v<=fair_hi?RATING_FAIR:RATING_POOR;
-}
-static rating rate_co2(void){return rate_upper(sensor.co2,UI_CO2_FAIR,UI_CO2_POOR);}
-static rating rate_hcho(void){return rate_upper(sensor.hcho,UI_HCHO_FAIR,UI_HCHO_POOR);}
-static rating rate_pm(int size){
-    static const float fair[]={UI_PM1_FAIR,UI_PM25_FAIR,UI_PM4_FAIR,UI_PM10_FAIR};
-    static const float poor[]={UI_PM1_POOR,UI_PM25_POOR,UI_PM4_POOR,UI_PM10_POOR};
-    float v=size==0?sensor.pm1:size==1?sensor.pm:size==2?sensor.pm4:sensor.pm10;
-    return rate_upper(v,fair[size],poor[size]);
-}
-static rating rate_gas(int lane){
-    return lane?rate_upper(sensor.nox,UI_NOX_FAIR,UI_NOX_POOR):rate_upper(sensor.voc,UI_VOC_FAIR,UI_VOC_POOR);
-}
-static rating rate_climate(int key){
+/* Per-measurement rating shown in each page's badge: the first band whose range
+   holds the reading (min inclusive, max exclusive, NAN open). Defaults come from
+   ui_theme.h and are placeholders; the device may replace them (atmos_set_bands()).
+   Missing readings have no rating. */
+#define OPEN NAN
+#define BAND(lo,hi,level,text) {lo,hi,level,text}
+#define UPPER(fair,poor) {BAND(OPEN,fair,0,"Good"),BAND(fair,poor,1,"Fair"),BAND(poor,OPEN,2,"Poor")},3
+#define RANGE(glo,ghi,flo,fhi) {BAND(glo,ghi,0,"Good"),BAND(flo,fhi,1,"Fair"),BAND(OPEN,OPEN,2,"Poor")},3
+static struct { atmos_band band[ATMOS_BANDS_MAX]; int n; } bands[ATMOS_READINGS]={
+    [ATMOS_CO2]={UPPER(UI_CO2_FAIR,UI_CO2_POOR)},[ATMOS_VOC]={UPPER(UI_VOC_FAIR,UI_VOC_POOR)},
+    [ATMOS_NOX]={UPPER(UI_NOX_FAIR,UI_NOX_POOR)},[ATMOS_HCHO]={UPPER(UI_HCHO_FAIR,UI_HCHO_POOR)},
+    [ATMOS_PM1]={UPPER(UI_PM1_FAIR,UI_PM1_POOR)},[ATMOS_PM25]={UPPER(UI_PM25_FAIR,UI_PM25_POOR)},
+    [ATMOS_PM4]={UPPER(UI_PM4_FAIR,UI_PM4_POOR)},[ATMOS_PM10]={UPPER(UI_PM10_FAIR,UI_PM10_POOR)},
+    [ATMOS_TEMPERATURE]={RANGE(UI_TEMP_GOOD_LOW,UI_TEMP_GOOD_HIGH,UI_TEMP_FAIR_LOW,UI_TEMP_FAIR_HIGH)},
+    [ATMOS_HUMIDITY]={RANGE(UI_RH_GOOD_LOW,UI_RH_GOOD_HIGH,UI_RH_FAIR_LOW,UI_RH_FAIR_HIGH)},
     /* Pressure is weather, not air quality: it has no warning band. */
-    if(key==2)return isfinite(sensor.pressure)?RATING_GOOD:RATING_NONE;
-    return key?rate_band(sensor.rh,UI_RH_GOOD_LOW,UI_RH_GOOD_HIGH,UI_RH_FAIR_LOW,UI_RH_FAIR_HIGH):
-        rate_band(sensor.temp,UI_TEMP_GOOD_LOW,UI_TEMP_GOOD_HIGH,UI_TEMP_FAIR_LOW,UI_TEMP_FAIR_HIGH);
+    [ATMOS_PRESSURE]={{BAND(OPEN,OPEN,0,"Good")},1},
+};
+static float reading_value(int r){
+    switch(r){
+    case ATMOS_CO2:return sensor.co2;case ATMOS_VOC:return sensor.voc;case ATMOS_NOX:return sensor.nox;
+    case ATMOS_HCHO:return sensor.hcho;case ATMOS_PM1:return sensor.pm1;case ATMOS_PM25:return sensor.pm;
+    case ATMOS_PM4:return sensor.pm4;case ATMOS_PM10:return sensor.pm10;case ATMOS_TEMPERATURE:return sensor.temp;
+    case ATMOS_HUMIDITY:return sensor.rh;default:return sensor.pressure;}
 }
-/* Overview: the worst rating among the measurements on the detail pages. */
+typedef const atmos_band *rating;
+static rating rate(int r){
+    float v=reading_value(r);
+    if(isnan(v))return NULL;
+    for(int i=0;i<bands[r].n;i++){
+        const atmos_band *b=&bands[r].band[i];
+        if((isnan(b->min) || v>=b->min) && (isnan(b->max) || v<b->max))return b;
+    }
+    return NULL;
+}
+static const char *rating_text(rating r){return r?r->text:"--";}
+/* Lowest reading rated at `level` or worse, for artwork that tracks the badge. */
+static float band_start(int r,int level,float fallback){
+    float lo=INFINITY;
+    for(int i=0;i<bands[r].n;i++)if(bands[r].band[i].level>=level && isfinite(bands[r].band[i].min))lo=fminf(lo,bands[r].band[i].min);
+    return isfinite(lo)?lo:fallback;
+}
+bool atmos_set_bands(int reading,const atmos_band *band,int n){
+    if(reading<0 || reading>=ATMOS_READINGS || n<0 || n>ATMOS_BANDS_MAX || (n && !band))return false;
+    for(int i=0;i<n;i++){bands[reading].band[i]=band[i];bands[reading].band[i].text[ATMOS_BAND_TEXT-1]=0;}
+    bands[reading].n=n;full_dirty=true;data_version++;
+    return true;
+}
+static rating rate_co2(void){return rate(ATMOS_CO2);}
+static rating rate_hcho(void){return rate(ATMOS_HCHO);}
+static rating rate_pm(int size){return rate(ATMOS_PM1+size);}
+static rating rate_gas(int lane){return rate(ATMOS_VOC+lane);}
+static rating rate_climate(int key){return rate(ATMOS_TEMPERATURE+key);}
+/* Overview: the worst-level rating among all readings. */
 static rating rate_overall(void){
-    rating r[]={rate_co2(),rate_pm(0),rate_pm(1),rate_pm(2),rate_pm(3),
-        rate_gas(0),rate_gas(1),rate_climate(0),rate_climate(1),rate_hcho()};
-    rating worst=RATING_NONE;
-    for(unsigned i=0;i<sizeof r/sizeof *r;i++)if(r[i]>worst)worst=r[i];
+    rating worst=NULL;
+    for(int i=0;i<ATMOS_READINGS;i++){rating r=rate(i);if(r && (!worst || r->level>worst->level))worst=r;}
     return worst;
 }
-static bool warning(void){return rate_overall()==RATING_POOR;}
+static bool warning(void){rating r=rate_overall();return r && r->level>=2;}
 static lv_color_t color(bool reverse){return lv_color_hex(reverse?UI_COLOR_PAPER:UI_COLOR_INK);}
 
 /* Direct fills whose clip area extended past the layer buffer (diagnostic). */
@@ -270,6 +297,7 @@ static lv_area_t header_ink_bounds(const char *text,const lv_font_t *font){
     }
     return bounds;
 }
+static int ink_width(const char *text,int size);
 static void detail_header(const char *title,const char *badge){
     /* Titles are capitals: centre the cap height, so a tail (the Q in
        AIR QUALITY) neither raises the title nor differs between pages. */
@@ -279,7 +307,8 @@ static void detail_header(const char *title,const char *badge){
     dashboard_text(title,UI_MARGIN-ink.x1,title_y,UI_FONT_TITLE,false);
     rect(UI_MARGIN,UI_HEADER_BOTTOM,UI_WIDTH-2*UI_MARGIN,UI_DIVIDER,false,0);
     if(!badge)return;
-    int badge_size=16;
+    /* Long configured texts drop to the small font. */
+    int badge_size=ink_width(badge,16)<=UI_BADGE_WIDTH-6?16:12;
     ink=header_ink_bounds(badge,dashboard_font(badge_size));
     int text_x=UI_BADGE_X+(UI_BADGE_WIDTH-(ink.x2-ink.x1+1))/2-ink.x1;
     int text_y=UI_PM_HEADER_Y+(UI_BADGE_HEIGHT-(ink.y2-ink.y1+1))/2-ink.y1;
@@ -569,23 +598,45 @@ static float chart_interpolate(const sample *samples,int n,double at,int key,con
     }
     return n?chart_sample(samples[n-1].value,key,weights):NAN;
 }
+/* Gases and Climate selection changes ease the trace in screen space from the
+   previous reading's curve (on its own scale) to the new one, so it rises or
+   falls rather than jumping. The previous scale is frozen at the change. */
+static int chart_from_key=-1,chart_to_key=-1;
+static float chart_from_low,chart_from_high,chart_blend_age=UI_CHART_BLEND_TIME;
+static float chart_y(float value,float low,float high){
+    return clamp(chart_bottom-(value-low)/(high-low)*(chart_bottom-UI_CHART_TOP),UI_CHART_TOP,chart_bottom);
+}
 static void history_graph(const sample *samples,int n,int key,const float *weights,
                           const char *name,const char *unit,float low,float high){
+    bool blend=!weights && chart_blend_age<UI_CHART_BLEND_TIME && key==chart_to_key && chart_from_key>=0;
+    float q=ease(chart_blend_age/UI_CHART_BLEND_TIME);
     history_panel();
     chart_geometry();
     for(int i=0;i<=UI_CHART_Y_INTERVALS;i++){
         float fraction=(float)i/UI_CHART_Y_INTERVALS;
         chart_tick(mix(low,high,fraction),mix(chart_bottom,UI_CHART_TOP,fraction));
     }
-    double first=n?samples[0].at:0,last=n?samples[n-1].at:0,span=last-first;
+    double first=n?samples[0].at:0,last=n?samples[n-1].at:0;
+    /* Once the history span is held, the chart shows exactly that span up to the
+       newest sample, interpolating into the one sample kept from before it. */
+    if(last-first>history_window)first=last-history_window;
+    double span=last-first;
     if(!n){chart_axes(name,unit,span);history_caption(span);return;}
     float previous=NAN,trace[UI_CHART_RIGHT+1];
     int begin=span>0?chart_left:UI_CHART_RIGHT;
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
         double at=span>0?first+(last-first)*(x-chart_left)/(double)(UI_CHART_RIGHT-chart_left):last;
         float value=chart_interpolate(samples,n,at,key,weights);
-        if(!isfinite(value) || (key!=4 && value<0)){trace[x-chart_left]=NAN;continue;}
-        float y=clamp(chart_bottom-(value-low)/(high-low)*(chart_bottom-UI_CHART_TOP),UI_CHART_TOP,chart_bottom);
+        bool valid=isfinite(value) && (key==4 || value>=0);
+        float y=valid?chart_y(value,low,high):NAN;
+        if(blend){
+            float from=chart_interpolate(samples,n,at,chart_from_key,NULL);
+            if(isfinite(from) && (chart_from_key==4 || from>=0)){
+                float y0=chart_y(from,chart_from_low,chart_from_high);
+                y=valid?mix(y0,y,q):y0;valid=true;
+            }
+        }
+        if(!valid){trace[x-chart_left]=NAN;continue;}
         chart_fill_span(x,(int)ceil(y),chart_bottom);
         trace[x-chart_left]=y;
     }
@@ -607,7 +658,7 @@ static float field_limit(int key){
     static const float limit[]={UI_SENSOR_CO2_MAX,UI_SENSOR_PM_MAX,UI_SENSOR_INDEX_MAX,UI_SENSOR_INDEX_MAX,UI_SENSOR_TEMP_MAX,UI_SENSOR_RH_MAX,UI_SENSOR_PRESSURE_MAX,UI_SENSOR_HCHO_MAX};
     return limit[key];
 }
-static void history_chart(int key,const char *name,const char *unit,float minimum_range,float padding_ratio){
+static void chart_range(int key,float minimum_range,float padding_ratio,float *low_out,float *high_out){
     float minimum=INFINITY,maximum=-INFINITY;
     for(int i=0;i<count;i++){
         float value=field(history[i].value,key);
@@ -623,7 +674,25 @@ static void history_chart(int key,const char *name,const char *unit,float minimu
     float low=floor((minimum-padding)/step)*step;
     if(key!=4)low=fmax(0,low);
     float high=fmin(fmax(low+step,ceil((maximum+padding)/step)*step),field_limit(key));
+    *low_out=low;*high_out=high;
+}
+static void history_chart(int key,const char *name,const char *unit,float minimum_range,float padding_ratio){
+    float low,high;chart_range(key,minimum_range,padding_ratio,&low,&high);
     history_graph(history,count,key,NULL,name,unit,low,high);
+}
+/* Scale policy of the Gases (keys 2, 3) and Climate (4-6) charts. */
+static void selection_chart_range(int key,float *low,float *high){
+    static const float minimum[]={UI_GAS_CHART_MIN_VOC,UI_GAS_CHART_MIN_NOX,
+        UI_CLIMATE_MIN_TEMP_RANGE,UI_CLIMATE_MIN_RH_RANGE,UI_CLIMATE_MIN_PRESSURE_RANGE};
+    chart_range(key,minimum[key-2],key<4?UI_GAS_CHART_PADDING:UI_CLIMATE_PADDING,low,high);
+}
+/* Start easing the visible chart from key `from` to key `to`. Off-screen
+   selection changes (automatic cycling resetting the next page) switch at once. */
+static void start_chart_blend(int s,int from,int to){
+    if(s!=scene || moving){chart_blend_age=UI_CHART_BLEND_TIME;return;}
+    if(chart_blend_age<UI_CHART_BLEND_TIME)from=chart_to_key; /* retarget from the newest */
+    selection_chart_range(from,&chart_from_low,&chart_from_high);
+    chart_from_key=from;chart_to_key=to;chart_blend_age=0;
 }
 /* The reading and unit share the header title's column: the largest value font
    whose widest reading ("40.0k", or four digits) fits the title's ink width. */
@@ -699,7 +768,7 @@ bool atmos_select_pm_at(int x,int y){
         select_gas(x>=gas_divider_x);return true;
     }
     if(scene==4 && y>UI_HEADER_BOTTOM && y<UI_HISTORY_PANEL_Y){
-        climate_selected=climate_row_at(y);data_version++;lv_obj_invalidate(surface);return true;
+        select_climate(climate_row_at(y));return true;
     }
     return false;
 }
@@ -1096,6 +1165,13 @@ static void draw_climate_detail(void){
         int b=l.baseline[row];
         lv_area_t ink=header_ink_bounds(climate_labels[row],dashboard_font(UI_CLIMATE_LABEL_SIZE));
         dashboard_text(climate_labels[row],l.label_x-ink.x1,b-label_base,UI_CLIMATE_LABEL_SIZE,false);
+        /* As on Gases, the underlined label names the reading the history chart shows. */
+        /* Centred in the space between the label's descenders and the row's rule
+           (or the history panel), so it touches neither. */
+        if(row==climate_selected){
+            int below=b-label_base+ink.y2+1,limit=row<2?l.rule[row]:UI_HISTORY_PANEL_Y;
+            rect(l.label_x,below+(limit-below-UI_GAS_UNDERLINE)/2,ink.x2-ink.x1+1,UI_GAS_UNDERLINE,false,0);
+        }
         ink=header_ink_bounds(l.value[row],dashboard_font(UI_CLIMATE_VALUE_SIZE));
         int value_x=l.value_center-(ink.x1+ink.x2+1)/2;
         dashboard_text(l.value[row],value_x,b-value_base,UI_CLIMATE_VALUE_SIZE,false);
@@ -1110,7 +1186,8 @@ static void draw_climate_detail(void){
 /* Ribbon weight follows the same cutoffs as the rating badge: half weight at
    Fair, full weight at Poor, so each ribbon visibly tracks its index readout. */
 static float gas_level(int lane){
-    float value=lane?sensor.nox:sensor.voc,fair=lane?UI_NOX_FAIR:UI_VOC_FAIR,poor=lane?UI_NOX_POOR:UI_VOC_POOR;
+    float value=lane?sensor.nox:sensor.voc,fair=band_start(ATMOS_VOC+lane,1,lane?UI_NOX_FAIR:UI_VOC_FAIR);
+    float poor=fmaxf(band_start(ATMOS_VOC+lane,2,lane?UI_NOX_POOR:UI_VOC_POOR),fair+1);
     if(!isfinite(value))return 0;
     return value<fair?.5f*norm(value,0,fair):.5f+.5f*norm(value,fair,poor);
 }
@@ -1662,12 +1739,17 @@ static lv_area_t animated_area(int which){
     }
 }
 static void invalidate_frame(void){
-    if(moving || full_dirty || pm_blend_age<UI_PM_TRANSITION_TIME){
+    if(moving || full_dirty || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME){
         lv_obj_invalidate(surface);full_dirty=false;
     }else if(scene!=2 || (int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick){
         lv_area_t a=animated_area(scene);lv_obj_invalidate_area(surface,&a);
     }
     pm_last_tick=(int64_t)floor(t*UI_PM_FIELD_FPS);
+}
+/* Keep one sample older than the span, so the trace reaches the chart's left edge;
+   drop older ones. */
+static void prune_history(void){
+    while(count>1 && t-history[1].at>=history_window){memmove(history,history+1,(--count)*sizeof *history);}
 }
 static void take_sample(void){
     if(!external_data){
@@ -1689,15 +1771,22 @@ static void take_sample(void){
         sensor.pm10=fminf(sensor.pm10,UI_SENSOR_PM_MAX);sensor.pressure=fminf(sensor.pressure,UI_SENSOR_PRESSURE_MAX);
         sensor.hcho=fminf(sensor.hcho,UI_SENSOR_HCHO_MAX);
     }
-    if(count==62){memmove(history,history+1,61*sizeof *history);count--;}
+    prune_history();
+    /* After the span grows the buffer can fill before the oldest sample expires: drop
+       the sample whose neighbours are closest, so the trace keeps its full extent. */
+    if(count==HISTORY_CAP){
+        int drop=1;
+        for(int i=2;i<count-1;i++)if(history[i+1].at-history[i-1].at<history[drop+1].at-history[drop-1].at)drop=i;
+        memmove(history+drop,history+drop+1,(--count-drop)*sizeof *history);
+    }
     history[count++]=(sample){t,sensor};full_dirty=true;data_version++;
 }
 void atmos_init(void){
     axis_label_canvas=lv_canvas_create(lv_screen_active());
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
-    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=CYCLE_FIRST;queued=-1;
-    pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
+    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=CYCLE_FIRST;queued=-1;pending_advance=0;
+    pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
     gas_intensity[0]=gas_level(0);gas_intensity[1]=gas_level(1);
     for(int j=0;j<UI_HCHO_MOLECULES;j++)hcho_grow[j]=j<hcho_target()?1:0;
     t=age=movement=anim_t=0;changed=-10;next_sample=2;paused=hidden=external_data=moving=false;automatic=true;
@@ -1717,11 +1806,25 @@ void atmos_init(void){
 }
 static void select_gas(int lane){
     if(lane==gas_selected)return;
-    gas_selected=lane;full_dirty=true;data_version++;lv_obj_invalidate(surface);
+    start_chart_blend(3,2+gas_selected,2+lane);gas_selected=lane;full_dirty=true;data_version++;lv_obj_invalidate(surface);
 }
+static void select_climate(int row){
+    if(row==climate_selected)return;
+    start_chart_blend(4,4+climate_selected,4+row);climate_selected=row;full_dirty=true;data_version++;lv_obj_invalidate(surface);
+}
+/* Without touch, automatic cycling steps through each page's readings in reading
+   order (Gases VOC then NOx, Particles left to right, Climate top to bottom),
+   splitting the hold evenly between them. */
+static int auto_items(int s){return s==3?2:s==2?4:s==4?3:1;}
+static int auto_selected(int s){return s==3?gas_selected:s==2?pm_selected:s==4?climate_selected:0;}
+static void auto_select(int s,int item){
+    if(s==3)select_gas(item);else if(s==2)atmos_select_pm(item);else if(s==4)select_climate(item);
+}
+int atmos_page(int position){return page_order[(position%ATMOS_SCENES+ATMOS_SCENES)%ATMOS_SCENES];}
 static int cycle_next(int from,int direction){
-    int n=ATMOS_SCENES-CYCLE_FIRST,i=from<CYCLE_FIRST?(direction>0?-1:0):from-CYCLE_FIRST;
-    return CYCLE_FIRST+((i+direction)%n+n)%n;
+    int p=0;while(p<ATMOS_SCENES && page_order[p]!=from)p++;
+    int n=ATMOS_SCENES-CYCLE_FIRST,i=p<CYCLE_FIRST?(direction>0?-1:0):p-CYCLE_FIRST;
+    return page_order[CYCLE_FIRST+((i+direction)%n+n)%n];
 }
 static float transition_duration(int from,int to){
     (void)to;
@@ -1729,8 +1832,8 @@ static float transition_duration(int from,int to){
     return seconds[from];
 }
 static void prerender_step(void){
-    if(!automatic || pm_blend_age<UI_PM_TRANSITION_TIME){pre_stage=0;return;}
-    double start=t+(6.5f-age);
+    if(!automatic || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME){pre_stage=0;return;}
+    double start=t+(hold-age);
     int to=cycle_next(scene,1);
     if(pre_from!=scene || pre_to!=to || pre_version!=data_version || fabs(pre_start-start)>1e-4){
         pre_stage=0;pre_from=scene;pre_to=to;pre_version=data_version;pre_start=start;
@@ -1745,7 +1848,7 @@ void atmos_step(double dt){
     if(paused || hidden || dt<=0)return;
     /* Limit catch-up after suspension; normal operation advances at active time. */
     dt=fmin(dt,.1f);t+=dt;prerendered_last_step=-1;
-    pm_blend_age=fmin(UI_PM_TRANSITION_TIME,pm_blend_age+dt);
+    pm_blend_age=fmin(UI_PM_TRANSITION_TIME,pm_blend_age+dt);chart_blend_age=fminf(UI_CHART_BLEND_TIME,chart_blend_age+(float)dt);
     float concentration=isfinite(sensor.pm10)?clamp(sensor.pm10,0,UI_PM_DENSITY_LIMIT):0;
     float density_target=UI_PM_DENSITY_MIN+(UI_PM_PARTICLE_MAX-UI_PM_DENSITY_MIN)*
         concentration/(concentration+UI_PM_DENSITY_HALF);
@@ -1754,19 +1857,24 @@ void atmos_step(double dt){
         gas_intensity[lane]+=(gas_level(lane)-gas_intensity[lane])*(1-exp(-dt/UI_GAS_INTENSITY_TIME));
     }
     hcho_grow_step(dt);
-    if(t+1e-7f>=next_sample){take_sample();next_sample+=2;}
-    while(count && t-history[0].at>120){memmove(history,history+1,(--count)*sizeof *history);}
+    if(t+1e-7f>=next_sample){take_sample();next_sample+=sample_every();}
+    prune_history();
     if(moving){
         movement+=dt;
         if(movement>=duration){
-            /* Automatic cycling always arrives at Gases on VOC. */
-            if(automatic && scene==3 && destination!=3)select_gas(0);
-            scene=destination;moving=false;age=0;full_dirty=true;
-            if(queued>=0){int requested=queued;queued=-1;atmos_set_scene(requested);}}
+            scene=destination;moving=false;age=0;full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;
+            /* Reset the next page now, before its snapshot is pre-rendered, so
+               automatic cycling arrives on its first reading. */
+            if(automatic){int next=cycle_next(scene,1);if(next!=scene)auto_select(next,0);}
+            if(queued>=0){int requested=queued;queued=-1;atmos_set_scene(requested);}
+            /* Key presses made during the transition now step the arrived page. */
+            else while(pending_advance && !moving){int d=pending_advance>0?1:-1;pending_advance-=d;atmos_advance(d);}}
     }else{age+=dt;
-        /* Automatic cycling shows VOC for the first half of the Gases hold, then NOx. */
-        if(automatic && scene==3 && gas_selected==0 && age>=UI_GAS_SWITCH_TIME)select_gas(1);
-        prerender_step();if(automatic && age>=6.5f)atmos_navigate(1);}
+        if(automatic){
+            int n=auto_items(scene),item=LV_MIN(n-1,(int)(age*n/hold));
+            if(item>auto_selected(scene))auto_select(scene,item);
+        }
+        prerender_step();if(automatic && age>=hold)atmos_navigate(1);}
     invalidate_frame();
 }
 void atmos_set_scene(int requested){
@@ -1781,6 +1889,20 @@ void atmos_set_scene(int requested){
     destination=requested;movement=t-start;moving=true;snapshots_ready=ready;pre_stage=0;
     if(ready)prerendered_transitions++;
 }
+/* Hardware keys (no touch): step the underlined reading within the page first, and
+   move to the neighbouring page past its last (or before its first) reading. The
+   page is entered on its first reading going forward, its last going back. Each
+   press restarts the hold, so automatic cycling gives the reader a full hold. */
+void atmos_advance(int direction){
+    direction=direction<0?-1:1;
+    /* A press during a transition waits for the arriving page rather than skipping it. */
+    if(moving){pending_advance+=direction;return;}
+    int item=auto_selected(scene)+direction;
+    if(item>=0 && item<auto_items(scene)){auto_select(scene,item);age=0;return;}
+    int to=cycle_next(scene,direction);
+    if(to!=scene)auto_select(to,direction>0?0:auto_items(to)-1);
+    age=0;atmos_set_scene(to);
+}
 void atmos_navigate(int direction){atmos_set_scene(cycle_next(queued>=0?queued:moving?destination:scene,direction));}
 void atmos_set_scenario(int value){
     if(value<0 || value>=(int)(sizeof profiles/sizeof profiles[0]))return;
@@ -1789,6 +1911,33 @@ void atmos_set_scenario(int value){
 void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;}
 void atmos_toggle_pause(void){paused=!paused;}
 void atmos_toggle_auto(void){automatic=!automatic;}
+void atmos_set_auto(bool on){automatic=on;}
+bool atmos_auto(void){return automatic;}
+void atmos_set_hold(float seconds){if(!isnan(seconds))hold=clamp(seconds,ATMOS_HOLD_MIN,ATMOS_HOLD_MAX);}
+float atmos_hold(void){return hold;}
+void atmos_set_history_window(float seconds){
+    if(isnan(seconds))return;
+    history_window=clamp(seconds,ATMOS_HISTORY_MIN,ATMOS_HISTORY_MAX);
+    prune_history();
+    /* The next sample follows the newest at the new interval (now, if that has passed). */
+    if(count)next_sample=fmax(t,history[count-1].at+sample_every());
+    full_dirty=true;data_version++;if(surface)lv_obj_invalidate(surface);
+}
+float atmos_history_window(void){return history_window;}
+/* Each reading's page and its position there (the underline/chart selection). */
+static const int8_t reading_scene[ATMOS_READINGS]={1,3,3,5,2,2,2,2,4,4,4};
+static const int8_t reading_item[ATMOS_READINGS]={0,0,1,0,0,1,2,3,0,1,2};
+void atmos_select_reading(int r){
+    if(r<0 || r>=ATMOS_READINGS)return;
+    int s=reading_scene[r];
+    auto_select(s,reading_item[r]);age=0;pending_advance=0;
+    atmos_set_scene(s);
+}
+int atmos_reading(void){
+    int s=queued>=0?queued:moving?destination:scene,item=auto_selected(s);
+    for(int r=0;r<ATMOS_READINGS;r++)if(reading_scene[r]==s && reading_item[r]==item)return r;
+    return -1;
+}
 void atmos_set_hidden(bool value){hidden=value;}
 bool atmos_is_moving(void){return moving;}
 unsigned atmos_prerendered_transitions(void){return prerendered_transitions;}
@@ -1814,7 +1963,7 @@ int atmos_self_test(void){
     for(int i=0;i<128;i++)atmos_step(.025f);
     if(scene!=4 || moving || queued!=-1)return 5;
     for(int i=0;i<5000;i++)atmos_step(.025f);
-    if(count<59 || count>61 || t-history[0].at>120)return 6;
+    if(count<60 || count>62 || t-history[0].at<120 || t-history[1].at>=120)return 6;
     atmos_set_readings((atmos_readings){800,2,40,1,23,50,1.1f,3.4f,5.8f,1013.2f,12});
     for(int i=0;i<80;i++)atmos_step(.025f);
     if(sensor.co2!=800 || history[count-1].value.co2!=800 ||
@@ -1870,6 +2019,34 @@ int atmos_self_test(void){
         while(moving)atmos_step(.025f);
         automatic=false;
     }
+    {
+        /* Home Assistant controls: reading selection, hold, history span, rating bands. */
+        atmos_select_reading(ATMOS_HUMIDITY);
+        while(moving)atmos_step(.025f);
+        if(scene!=4 || climate_selected!=1 || atmos_reading()!=ATMOS_HUMIDITY)return 28;
+        atmos_select_reading(ATMOS_NOX);
+        if(atmos_reading()!=ATMOS_NOX)return 29;
+        while(moving)atmos_step(.025f);
+        if(scene!=3 || gas_selected!=1)return 29;
+        atmos_set_hold(1e6f);if(atmos_hold()!=ATMOS_HOLD_MAX)return 30;atmos_set_hold(6.5f);
+        /* Shrinking discards samples older than the new span. */
+        atmos_set_history_window(60);
+        if(count<2 || t-history[1].at>=60)return 31;
+        /* Growing lets the chart fill to the new span (10 s samples). */
+        atmos_set_history_window(600);int held=count;
+        for(int i=0;i<4000;i++)atmos_step(.1f);
+        if(count<=held || count>HISTORY_CAP || t-history[0].at<380)return 32;
+        atmos_set_history_window(120);
+        for(int i=0;i<1300;i++)atmos_step(.1f);
+        if(count<60 || count>62)return 33;
+        atmos_band custom[2]={{NAN,500,0,"Fine"},{500,NAN,3,"Terrible"}};
+        atmos_band saved[ATMOS_BANDS_MAX];int saved_n=bands[ATMOS_CO2].n;memcpy(saved,bands[ATMOS_CO2].band,sizeof saved);
+        if(!atmos_set_bands(ATMOS_CO2,custom,2) || atmos_set_bands(ATMOS_CO2,custom,ATMOS_BANDS_MAX+1))return 34;
+        if(strcmp(rating_text(rate_co2()),sensor.co2<500?"Fine":"Terrible"))return 35;
+        if(sensor.co2>=500 && (!warning() || strcmp(rating_text(rate_overall()),"Terrible")))return 35;
+        atmos_set_bands(ATMOS_CO2,saved,saved_n);
+    }
+    puts("Controls: reading selection, hold bound, history span shrink/grow and rating bands passed.");
     puts("Prerender: hold-time transition snapshots match fresh renders and are used.");
     puts("PM: independent history channels, rapid selection, fixed transition window and missing-sample gaps passed.");
     puts("Model: sampling, history, pruning, navigation, pause, visibility and external data passed.");
