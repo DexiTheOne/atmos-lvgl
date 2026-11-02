@@ -63,6 +63,7 @@ display:
 atmos:
   display_id: panel
   frame_period: 59ms  # frame-rate cap, about 17 fps
+  key_interval: 250ms  # presses closer together than this are ignored
 
   # Debug: log fps, frame times, CPU share and heap every report_interval.
   frame_stats: false

@@ -63,6 +63,12 @@ void AtmosComponent::setup() {
 void AtmosComponent::advance(int direction) {
   if (!this->started_)
     return;  // the UI is created on the first frame
+  // Presses closer together than key_interval (bounce, repeats) are dropped.
+  uint32_t now = millis();
+  if (this->key_pressed_ && now - this->last_key_ms_ < this->key_interval_ms_)
+    return;
+  this->key_pressed_ = true;
+  this->last_key_ms_ = now;
   atmos_advance(direction);
 }
 

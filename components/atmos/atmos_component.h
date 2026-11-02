@@ -37,6 +37,7 @@ class AtmosComponent : public Component {
   void set_frame_period_us(uint32_t us) { this->period_us_ = us; }
   void set_report_interval_ms(uint32_t ms) { this->report_ms_ = ms; }
   void set_frame_stats(bool on) { this->frame_stats_ = on; }
+  void set_key_interval_ms(uint32_t ms) { this->key_interval_ms_ = ms; }
   float get_setup_priority() const override { return setup_priority::PROCESSOR; }
   void setup() override;
   void dump_config() override;
@@ -67,6 +68,9 @@ class AtmosComponent : public Component {
   uint32_t report_ms_{10000};
   bool started_{false};
   bool frame_stats_{false};
+  uint32_t key_interval_ms_{250};
+  uint32_t last_key_ms_{0};
+  bool key_pressed_{false};
   uint32_t next_step_us_{0};
   uint32_t last_report_ms_{0};
   uint32_t missed_steps_{0};

@@ -34,6 +34,7 @@ CONF_DISPLAY_ID = "display_id"
 CONF_FRAME_PERIOD = "frame_period"
 CONF_REPORT_INTERVAL = "report_interval"
 CONF_FRAME_STATS = "frame_stats"
+CONF_KEY_INTERVAL = "key_interval"
 CONF_READING_SELECT = "reading_select"
 CONF_AUTO_ADVANCE = "auto_advance"
 CONF_HOLD_TIME = "hold_time"
@@ -144,6 +145,10 @@ CONFIG_SCHEMA = cv.Schema(
         # Debug: log fps, frame times, CPU share, heap and the PROFILE lines (used by
         # bench.ps1 and the simulator's --hw-pace) every report_interval.
         cv.Optional(CONF_FRAME_STATS, default=False): cv.boolean,
+        # Minimum time between accepted atmos.next/atmos.previous presses.
+        cv.Optional(CONF_KEY_INTERVAL, default="250ms"): cv.All(
+            cv.positive_time_period_milliseconds, cv.Range(max=cv.TimePeriod(seconds=5))
+        ),
         cv.Optional(CONF_REPORT_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_READING_SELECT): select.select_schema(AtmosReadingSelect, icon="mdi:gauge"),
         cv.Optional(CONF_AUTO_ADVANCE): switch.switch_schema(
@@ -188,6 +193,7 @@ async def to_code(config):
     cg.add(var.set_frame_period_us(config[CONF_FRAME_PERIOD].total_microseconds))
     cg.add(var.set_report_interval_ms(config[CONF_REPORT_INTERVAL].total_milliseconds))
     cg.add(var.set_frame_stats(config[CONF_FRAME_STATS]))
+    cg.add(var.set_key_interval_ms(config[CONF_KEY_INTERVAL].total_milliseconds))
 
     for index, (key, _) in enumerate(READINGS):
         if key in config[CONF_SENSORS]:

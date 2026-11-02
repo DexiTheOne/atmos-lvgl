@@ -22,6 +22,8 @@ The panel has no touch. Its two keys are `binary_sensor: gpio` entries in `atmos
 
 `frame_stats` (default `false`) turns on the debug log: every `report_interval` the component logs fps, frame intervals, late frames, render/convert/push times, CPU share, heap and the `PROFILE` lines, plus one line per transition. `bench.ps1` needs it, so `atmos-bench.yaml` and `atmos-rlcd.yaml` set it to `true`.
 
+`key_interval` (default `250ms`, at most 5 s) rate-limits `atmos.next`/`atmos.previous`: a press within that time of the last accepted one is ignored, so contact bounce or rapid repeats cannot pile up page changes. Keep the binary sensors' `delayed_on`/`delayed_off` debounce filters as well.
+
 ## Home Assistant controls
 
 `atmos-rlcd.yaml` joins Wi-Fi and the Home Assistant API (credentials in a gitignored `secrets.yaml` beside it: `wifi_ssid`, `wifi_password`, `api_encryption_key`, `ota_password`). Each `atmos:` entity below is optional:
