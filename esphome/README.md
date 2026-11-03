@@ -24,6 +24,8 @@ The panel has no touch. Its two keys are `binary_sensor: gpio` entries in `atmos
 
 `key_interval` (default `250ms`, at most 5 s) rate-limits `atmos.next`/`atmos.previous`: a press within that time of the last accepted one is ignored, so contact bounce or rapid repeats cannot pile up page changes. Keep the binary sensors' `delayed_on`/`delayed_off` debounce filters as well.
 
+Boot splash: the ST7305 driver writes a blank frame to panel memory before Display On, so power-on shows no static. The component then draws the splash at once in its setup: `splash_name` (default `Atmos`, in the largest font that fits) and `splash_subtitle` (default `Visualizing Air Quality`; empty for none) over the "Made for ESPHome" badge (`desktop/splash_badge.h`). The UI starts once a Home Assistant API client connects (the network, without `api:`; at once with neither), or after `splash_timeout` (default `20s`, at most 5 min). `atmos_init()` runs in one scheduler call and the first frame in the next. That first frame opens from the splash with the overview's portal, zooming into the badge's house logo. The log reports "Splash shown in … ms" and "Atmos UI started after … ms of splash".
+
 ## Home Assistant controls
 
 `atmos-rlcd.yaml` joins Wi-Fi and the Home Assistant API (credentials in a gitignored `secrets.yaml` beside it: `wifi_ssid`, `wifi_password`, `api_encryption_key`, `ota_password`). Each `atmos:` entity below is optional:

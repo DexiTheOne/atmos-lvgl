@@ -30,6 +30,7 @@ static HWND window;
    device's PROFILE log line). hw_loop_ms is the device loop overhead between frames
    (frame interval minus frame work, averaged over the run). */
 static bool hw_pace;
+static double boot_ms=1500; /* simulated boot time the splash holds for (--boot=ms) */
 /* Formaldehyde (last entry) is not yet measured: the CO2 page's costs stand in. */
 static const double hw_still_ms[ATMOS_SCENES]={70.9,33.4,46.4,31.2,29.0,37.5};
 static const double hw_trans_ms[ATMOS_SCENES]={26.0,27.7,36.5,63.6,19.4,21.9};
@@ -106,7 +107,18 @@ static int verify_presentation(void){
     }
     DeleteDC(target);ReleaseDC(NULL,screen);return failed;
 }
+/* False while the boot splash shows: the UI model does not exist yet. */
+static bool ui_started=true;
+static double boot_end; /* when the simulated boot ends and the UI starts */
+static double now_ms(void){LARGE_INTEGER f,c;QueryPerformanceFrequency(&f);QueryPerformanceCounter(&c);return c.QuadPart*1000.0/f.QuadPart;}
+/* R: reboot the device. The UI is torn down and the boot splash shows again. */
+static void reboot(void){
+    lv_obj_clean(lv_screen_active());
+    atmos_show_splash(NULL);ui_started=false;boot_end=now_ms()+boot_ms;
+}
 static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data){
+    if(!ui_started && (message==WM_LBUTTONDOWN || message==WM_MOUSEWHEEL || message==WM_SIZE ||
+        (message==WM_KEYDOWN && key!=VK_ESCAPE && key!='R')))return 0;
     switch(message){
     case WM_ERASEBKGND:return 1;
     case WM_PAINT:{
@@ -141,6 +153,7 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key=='A')atmos_toggle_auto();
         else if(key=='H'){hw_pace=!hw_pace;update_title();}
         else if(key=='S')save_bmp("atmos-frame.bmp");
+        else if(key=='R')reboot();
         else if(key==VK_ESCAPE)DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:PostQuitMessage(0);return 0;
@@ -188,7 +201,7 @@ static bool parse_rgb(const char *text,uint32_t *out){
 static void update_title(void){
     if(!window)return;
     char title[200];
-    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | H hw pace | S save",
+    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | H hw pace | S save | R reboot",
         hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"");
     SetWindowText(window,title);
 }
@@ -199,6 +212,7 @@ int main(int argc,char **argv){
     for(int i=1;i<argc;i++){
         if(strncmp(argv[i],"--ink=",6)==0){if(!parse_rgb(argv[i]+6,&ink_rgb)){fprintf(stderr,"Bad --ink\n");return 2;}}
         else if(strcmp(argv[i],"--hw-pace")==0)hw_pace=true;
+        else if(strncmp(argv[i],"--boot=",7)==0)boot_ms=atof(argv[i]+7);
         else if(strncmp(argv[i],"--paper=",8)==0){if(!parse_rgb(argv[i]+8,&paper_rgb)){fprintf(stderr,"Bad --paper\n");return 2;}}
         else argv[kept++]=argv[i];
     }
@@ -209,7 +223,38 @@ int main(int argc,char **argv){
     lv_init();display=lv_display_create(400,300);
     lv_display_set_color_format(display,LV_COLOR_FORMAT_I1);
     lv_display_set_buffers(display,draw_buffer,NULL,sizeof draw_buffer,LV_DISPLAY_RENDER_MODE_DIRECT);
-    lv_display_set_flush_cb(display,flush);atmos_init();
+    lv_display_set_flush_cb(display,flush);
+    if(argc>1 && strcmp(argv[1],"--capture-splash")==0){
+        if(argc>3)atmos_set_splash_subtitle(argv[3]);
+        atmos_show_splash(argc>2?argv[2]:NULL);lv_refr_now(display);
+        if(verify_frame())return 14;
+        save_bmp("splash.bmp");puts("Splash saved as splash.bmp.");
+        lv_deinit();return 0;
+    }
+    /* Interactive runs and the intro test start on the boot splash, as the device does. */
+    bool intro_test=argc>1 && (strcmp(argv[1],"--test-intro")==0 || strcmp(argv[1],"--capture-intro")==0);
+    if(argc<=1 || intro_test){atmos_show_splash(NULL);ui_started=false;}
+    else atmos_init();
+    if(intro_test){
+        /* Splash, then the intro portal onto the first page: every presented frame must
+           be the composed one, and the transition must land on the first page. */
+        bool save=strcmp(argv[1],"--capture-intro")==0;
+        lv_refr_now(display);
+        if(verify_frame())return 40;
+        if(save)save_bmp("intro-frame-00.bmp");
+        atmos_init();ui_started=true;
+        int checked=0;
+        for(int i=1;i<=72;i++){
+            advance();
+            if(verify_frame())return 41;
+            const uint8_t *composed=atmos_transition_frame();
+            if(composed){checked++;if(memcmp(composed,frame_bits,sizeof frame_bits))return 42;}
+            if(save && i%4==0){char path[80];snprintf(path,sizeof path,"intro-frame-%02d.bmp",i);save_bmp(path);}
+        }
+        if(checked<40 || atmos_is_moving() || atmos_scene()!=atmos_page(1))return 43;
+        printf("Intro: splash, then %d portal frames matched the composed frame and landed on the first page.\n",checked);
+        lv_deinit();return 0;
+    }
     if(argc>1 && strcmp(argv[1],"--capture-stress")==0){
         atmos_toggle_auto();
         const atmos_readings cases[]={
@@ -460,6 +505,7 @@ int main(int argc,char **argv){
     LARGE_INTEGER frequency,counter;QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&counter);
     double previous=counter.QuadPart*1000.0/frequency.QuadPart,next_frame=previous,tick_carry=0;
+    boot_end=previous+boot_ms;
     bool running=true;
     while(running){
         MSG message;
@@ -473,6 +519,11 @@ int main(int argc,char **argv){
         if(hw_pace && now<next_frame){Sleep(1);continue;}
         double elapsed=now-previous;previous=now;
         tick_carry+=elapsed;uint32_t ticks=(uint32_t)tick_carry;tick_carry-=ticks;lv_tick_inc(ticks);
+        /* Stand-in for the device's boot: the splash holds until boot_ms, then the UI starts. */
+        if(!ui_started){
+            if(now<boot_end){lv_timer_handler();Sleep(10);continue;}
+            atmos_init();ui_started=true;continue;
+        }
         atmos_step(elapsed/1000.0);
         if(!hw_pace){lv_timer_handler();Sleep(2);continue;}
         /* One device frame: step, render, then hold for the device's cost of that frame

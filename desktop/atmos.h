@@ -12,6 +12,12 @@ typedef struct {
     float hcho;
 } atmos_readings;
 void atmos_init(void);
+/* Boot splash: the device name over a "Made for ESPHome" badge, drawn on its own
+   screen object. Call before atmos_init(); atmos_init() then opens the first page
+   from it with the overview's portal, zooming into the badge's logo. */
+void atmos_show_splash(const char *name);
+/* Line under the name, default "Visualizing Air Quality" (NULL or empty for none). Call before atmos_show_splash(). */
+void atmos_set_splash_subtitle(const char *text);
 void atmos_step(double seconds);
 void atmos_navigate(int direction);
 /* Left/right hardware key: next/previous reading on the page, then the next/previous page. */

@@ -98,6 +98,7 @@ class ST7305RLCD : public display::DisplayBuffer,
   bool verify_landscape_layout_();
   bool verify_i1_path_();
   void write_display_();
+  void write_ram_();
   void send_command_(uint8_t cmd);
   void send_data_(uint8_t data);
 

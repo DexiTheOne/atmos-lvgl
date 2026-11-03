@@ -9,6 +9,7 @@
 #endif
 #include "ui_theme.h"
 #include "ui_fonts.h"
+#include "splash_badge.h"
 #include <tgmath.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +66,8 @@ static double pre_start;
 static unsigned pre_version,prerendered_transitions;
 static int prerendered_last_step=-1; /* scene rasterised by the latest atmos_step(), or -1 */
 static bool paused, automatic=true, hidden, external_data, moving;
+/* The first transition after a splash opens from it onto the first page. */
+static bool intro;
 static int pm_selected=1,pm_snapshot_count;
 static float pm_from_weights[4]={0,1,0,0},pm_to_weights[4]={0,1,0,0};
 static const char *pm_labels[]={"PM1.0","PM2.5","PM4.0","PM10"};
@@ -193,7 +196,7 @@ static uint32_t compose_us_total,compose_count;
 static void sync_layer(lv_layer_t *target){
     while(target->draw_task_head){
         lv_draw_dispatch_wait_for_request();
-        if(!lv_draw_dispatch_layer(lv_obj_get_display(surface),target))lv_draw_dispatch_request();
+        if(!lv_draw_dispatch_layer(lv_display_get_default(),target))lv_draw_dispatch_request();
     }
 }
 /* Square opaque fills on a 1-bit layer set bits directly instead of queuing an LVGL
@@ -1674,6 +1677,14 @@ static void render_scene_buffer(int index,int which){
     layer=&offscreen;offset=0;draw_scene(which);
     lv_canvas_finish_layer(scene_canvas[index],&offscreen);
 }
+static void paint_splash(void);
+static float transition_duration(int from,int to);
+static void splash_portal(void);
+static void render_splash_buffer(void){
+    lv_layer_t offscreen;lv_canvas_init_layer(scene_canvas[0],&offscreen);
+    layer=&offscreen;offset=0;paint_splash();
+    lv_canvas_finish_layer(scene_canvas[0],&offscreen);
+}
 /* Finish LVGL's pending work on the output layer, then write the composed
    1-bit frame straight into it in whatever format the display uses (I1 on the
    bare panel, RGB565 under ESPHome). Ink and paper are pure black and white,
@@ -1718,12 +1729,13 @@ static void draw(lv_event_t *event){
     }
     if(!snapshots_ready){
         double start=t-movement;
-        anim_t=start;render_scene_buffer(0,scene);prepare_effect(scene);
+        anim_t=start;
+        if(intro){render_splash_buffer();splash_portal();}else{render_scene_buffer(0,scene);prepare_effect(scene);}
         anim_t=start+duration;render_scene_buffer(1,destination);
         anim_t=t;snapshots_ready=true;
     }
     uint32_t compose_start=clock_us?clock_us():0;
-    compose_transition(scene,destination,(int32_t)(clamp(movement/duration,0,1)*FX));
+    compose_transition(intro?0:scene,destination,(int32_t)(clamp(movement/duration,0,1)*FX));
     if(clock_us){compose_us_total+=clock_us()-compose_start;compose_count++;}
     layer=output;blit_transition(output);transition_drawn=true;
 }
@@ -1788,7 +1800,85 @@ static void take_sample(void){
     }
     history[count++]=(sample){t,sensor};full_dirty=true;data_version++;
 }
+/* Boot splash. The ink of the name and the badge forms one group centred on the screen. */
+static const char *splash_name="Atmos",*splash_subtitle="Visualizing Air Quality";
+static lv_obj_t *splash;
+static void ink_text(const char *text,int center,int ink_top,int size){
+    centered_text(text,center,ink_top-header_ink_bounds(text,dashboard_font(size)).y1,size,false);
+}
+static int ink_height(const char *text,int size){
+    lv_area_t a=header_ink_bounds(text,dashboard_font(size));return a.y2-a.y1+1;
+}
+/* Splash layout, shared by the splash screen and the intro transition's anchor. */
+/* The name uses the largest font whose ink fits the content width (x 12-387). */
+static int splash_name_size(void){
+    static const int sizes[]={60,48,40,32,24,16};
+    for(int i=0;i<5;i++)if(ink_width(splash_name,sizes[i])<=UI_WIDTH-24)return sizes[i];
+    return 16;
+}
+/* Optional subtitle under the name: 16 px, or 12 px when that is too wide. */
+static int splash_subtitle_size(void){return ink_width(splash_subtitle,16)<=UI_WIDTH-24?16:12;}
+static int splash_subtitle_gap(void){return UI_TEXT_GAP;}
+/* The block (name ink top to badge bottom) is centred on the screen by its ink,
+   descenders included; the text sits close above the badge. */
+static void splash_layout(int *name_top,int *bx,int *by){
+    const int gap=18;
+    int name_h=ink_height(splash_name,splash_name_size());
+    if(splash_subtitle){
+        const lv_font_t *f=dashboard_font(splash_subtitle_size());
+        name_h+=splash_subtitle_gap()+header_ink_bounds(splash_subtitle,f).y2-header_ink_bounds("H",f).y1+1;
+    }
+    *name_top=(UI_HEIGHT-(name_h+gap+SPLASH_BADGE_H))/2;
+    *bx=(UI_WIDTH-SPLASH_BADGE_W)/2;*by=*name_top+name_h+gap;
+}
+static void paint_splash(void){
+    rect(0,0,UI_WIDTH,UI_HEIGHT,true,0);
+    int top,bx,by;splash_layout(&top,&bx,&by);
+    ink_text(splash_name,UI_WIDTH/2,top,splash_name_size());
+    if(splash_subtitle){
+        /* Placed on the capital height, so descenders do not move it. */
+        int size=splash_subtitle_size(),caps=header_ink_bounds("H",dashboard_font(size)).y1;
+        int y=top+ink_height(splash_name,splash_name_size())+splash_subtitle_gap();
+        centered_text(splash_subtitle,UI_WIDTH/2,y-caps,size,false);
+    }
+    /* The badge bitmap, drawn as row spans of ink. */
+    for(int y=0;y<SPLASH_BADGE_H;y++)for(int x=0;x<SPLASH_BADGE_W;){
+        if(!(splash_badge[y][x>>3]&(0x80>>(x&7)))){x++;continue;}
+        int run=x;while(run<SPLASH_BADGE_W && splash_badge[y][run>>3]&(0x80>>(run&7)))run++;
+        rect(bx+x,by+y,run-x,1,false,0);x=run;
+    }
+}
+static void draw_splash(lv_event_t *event){layer=lv_event_get_layer(event);offset=0;paint_splash();}
+/* The intro portal opens through the badge's house logo: the first run of inked
+   columns inside the outline wider than a few pixels (the outline's rounded
+   corners leave narrow slivers near the edges). */
+static void splash_portal(void){
+    int top,bx,by;splash_layout(&top,&bx,&by);
+    for(int x=4;x<SPLASH_BADGE_W-4;){
+        int x2=x,y1=SPLASH_BADGE_H,y2=-1;
+        for(;x2<SPLASH_BADGE_W-4;x2++){
+            bool any=false;
+            for(int y=4;y<SPLASH_BADGE_H-4;y++)if(splash_badge[y][x2>>3]&(0x80>>(x2&7))){any=true;y1=LV_MIN(y1,y);y2=LV_MAX(y2,y);}
+            if(!any)break;
+        }
+        if(x2-x>8){
+            portal_x=(bx*2+x+x2)<<7;portal_y=(by*2+y1+y2+1)<<7;portal_radius=((y2-y1+1)/2)<<8;
+            return;
+        }
+        x=x2+1;
+    }
+    portal_x=200<<8;portal_y=150<<8;portal_radius=25<<8;
+}
+void atmos_set_splash_subtitle(const char *text){splash_subtitle=text && *text?text:NULL;}
+void atmos_show_splash(const char *name){
+    if(name && *name)splash_name=name;
+    splash=lv_obj_create(lv_screen_active());lv_obj_remove_style_all(splash);
+    lv_obj_set_size(splash,UI_WIDTH,UI_HEIGHT);not_scrollable(splash);
+    lv_obj_add_event_cb(splash,draw_splash,LV_EVENT_DRAW_MAIN,NULL);
+}
 void atmos_init(void){
+    bool from_splash=splash!=NULL;
+    if(splash){lv_obj_delete(splash);splash=NULL;}
     axis_label_canvas=lv_canvas_create(lv_screen_active());
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
@@ -1810,6 +1900,9 @@ void atmos_init(void){
         lv_canvas_set_buffer(scene_canvas[i],scene_buf[i],UI_WIDTH,UI_HEIGHT,LV_COLOR_FORMAT_I1);
         hide_obj(scene_canvas[i]);
     }
+    /* Open from the splash through the overview's portal, zooming into the badge's logo. */
+    intro=from_splash;
+    if(intro){destination=scene;movement=0;duration=transition_duration(0,scene);moving=true;}
 }
 static void select_gas(int lane){
     if(lane==gas_selected)return;
@@ -1869,7 +1962,7 @@ void atmos_step(double dt){
     if(moving){
         movement+=dt;
         if(movement>=duration){
-            scene=destination;moving=false;age=0;full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;
+            scene=destination;moving=intro=false;age=0;full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;
             /* Reset the next page now, before its snapshot is pre-rendered, so
                automatic cycling arrives on its first reading. */
             if(automatic){int next=cycle_next(scene,1);if(next!=scene)auto_select(next,0);}

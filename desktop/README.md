@@ -27,6 +27,7 @@ Windows presentation composes the frame and letterboxing in an offscreen bitmap 
 | A | Toggle automatic cycling |
 | F1Ã¢â‚¬â€œF5 | Quiet morning, occupied room, cooking, open windows, sensor full scale |
 | S | Save native-resolution `atmos-frame.bmp` in the working directory |
+| R | Reboot the device: the UI is torn down and the boot splash shows again |
 | Escape | Close |
 
 Minimizing freezes active time. Scenes hold for 6.5 seconds by default (`atmos_set_hold()`). Transitions take 1.3 to 1.6 seconds, depending on the page being left. Navigation during movement keeps the latest requested destination. History starts empty and retains two minutes by default (`atmos_set_history_window()`), sampled every 2 s at first, stretching with the history held up to span/60. All default readings are simulated. The demo status cutoffs remain illustrative. All four PM channels have independent simulated readings and independent fields for real sensor input.
@@ -44,6 +45,8 @@ During transitions, two hidden LVGL canvases rasterize the live source/destinati
 ## Verification
 
 `build.ps1` runs `atmos --self-test` through CTest. Model checks cover empty history, sample timing, immutable history, scenario warning behavior, pruning, queued navigation, pause/minimize time freezing, and supplied sensor readings. Transition endpoints are compared to live source/destination rasters for all 20 directed scene pairs. Render checks exercise all 20 scene/scenario combinations, forward/reverse navigation, and intermediate transitions using the actual linked LVGL renderer, checking every pixel for the exact palette and rejecting empty frames. BMPs are written in `desktop/build/`. These are smoke/invariant checks, not a pixel comparison against the browser reference or a benchmark of the physical panel.
+
+A second CTest, `atmos --test-intro`, shows the boot splash, starts the UI and checks that every intro frame (the overview's portal zooming into the badge's house logo) is the composed 1-bit frame and that it lands on the first page. `--capture-intro` also saves those frames as `intro-frame-NN.bmp`, and `--capture-splash [name]` saves `splash.bmp`. An interactive run shows the splash for a simulated boot of `--boot=ms` (default 1500) before the UI starts. The badge is generated from `desktop/assets/made-for-esphome-black-on-white.png` by `python desktop/generate_splash_badge.py` (Pillow).
 
 For visual review, run `./atmos.exe --capture-transitions` from `desktop/build`, then run `python desktop/render_review.py` from the project root (requires Pillow). This creates frame sheets and GIFs in `artifacts/` for quiet and warning scenarios. Those GIFs sample the animation every 200 ms for inspection; the native application targets 40 fps.
 

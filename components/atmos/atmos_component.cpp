@@ -1,6 +1,12 @@
-#include "atmos_component.h"
+﻿#include "atmos_component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
+#ifdef USE_API
+#include "esphome/components/api/api_server.h"
+#endif
+#ifdef USE_NETWORK
+#include "esphome/components/network/util.h"
+#endif
 #include <esp_heap_caps.h>
 
 extern "C" {
@@ -57,7 +63,54 @@ void AtmosComponent::setup() {
     for (auto code : {LV_EVENT_REFR_START, LV_EVENT_REFR_READY})
       lv_display_add_event_cb(this->disp_, display_event_, code, this);
   this->report_start_ms_ = millis();
-  this->set_timeout("frame", 0, [this]() { this->frame_(); });
+  // The splash is cheap to draw, so it goes up at once; the UI, whose first frame is
+  // far more work, waits until boot has finished and the device is connected.
+  uint32_t start = micros();
+  atmos_set_splash_subtitle(this->splash_subtitle_);
+  atmos_show_splash(this->splash_name_);
+  lv_refr_now(this->disp_);
+  this->splash_ms_ = millis();
+  ESP_LOGI(TAG, "Splash shown in %.1f ms", (micros() - start) / 1000.0f);
+  this->set_timeout("frame", 100, [this]() { this->wait_ready_(); });
+}
+
+/* Connected means a Home Assistant API client when the API is configured, otherwise
+   the network. A device with neither starts as soon as setup has finished. */
+bool AtmosComponent::ready_() const {
+#ifdef USE_API
+  return api::global_api_server != nullptr && api::global_api_server->is_connected();
+#elif defined(USE_NETWORK)
+  return network::is_connected();
+#else
+  return true;
+#endif
+}
+
+void AtmosComponent::wait_ready_() {
+  bool timed_out = millis() - this->splash_ms_ >= this->splash_timeout_ms_;
+  if (!this->ready_() && !timed_out) {
+    this->set_timeout("frame", 100, [this]() { this->wait_ready_(); });
+    return;
+  }
+  // Create the UI in this call and draw its first frame in the next, so neither
+  // blocks the loop for long. The first frame opens from the splash.
+  uint32_t start = micros();
+  atmos_init();
+  if (this->frame_stats_)
+    atmos_set_clock([]() -> uint32_t { return micros(); });
+  this->started_ = true;
+  atmos_set_auto(this->auto_);
+  if (this->pending_reading_ >= 0)
+    atmos_select_reading(this->pending_reading_);
+  this->last_report_ms_ = millis();
+  ESP_LOGI(TAG, "Atmos UI started after %u ms of splash (%s) in %.1f ms; internal free %u, PSRAM free %u",
+           (unsigned) (millis() - this->splash_ms_), timed_out ? "timed out" : "connected",
+           (micros() - start) / 1000.0f, (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  this->set_timeout("frame", 0, [this]() {
+    this->next_step_us_ = micros();
+    this->frame_();
+  });
 }
 
 void AtmosComponent::advance(int direction) {
@@ -168,6 +221,7 @@ void AtmosComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "Atmos UI: own LVGL %d.%d.%d, 1-bit display, frame period %u us, frame stats %s every %u ms",
                 LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH, (unsigned) this->period_us_,
                 ONOFF(this->frame_stats_), (unsigned) this->report_ms_);
+  ESP_LOGCONFIG(TAG, "  Splash: \"%s\" / \"%s\", timeout %u ms", this->splash_name_, this->splash_subtitle_, (unsigned) this->splash_timeout_ms_);
 }
 
 /* Direct mode: px_map is the whole frame; only the rows LVGL redrew are converted.
@@ -228,20 +282,6 @@ void AtmosComponent::on_display_event_(lv_event_code_t code) {
    and a frame never starts earlier than its period (the frame-rate cap). */
 void AtmosComponent::frame_() {
   uint32_t now = micros();
-  if (!this->started_) {
-    atmos_init();
-    if (this->frame_stats_)
-      atmos_set_clock([]() -> uint32_t { return micros(); });
-    this->started_ = true;
-    atmos_set_auto(this->auto_);
-    if (this->pending_reading_ >= 0)
-      atmos_select_reading(this->pending_reading_);
-    this->next_step_us_ = now;
-    this->last_report_ms_ = millis();
-    ESP_LOGI(TAG, "Atmos UI started; internal free %u, PSRAM free %u",
-             (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
-             (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-  }
   // Fixed-cadence model steps: one step per frame period. A step that is a full period
   // late means a frame slot was missed; the model then advances by the real elapsed time.
   if ((int32_t) (now - this->next_step_us_) >= 0) {

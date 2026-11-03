@@ -450,6 +450,10 @@ void ST7305RLCD::init_display_() {
   this->send_command_(0xD0);
   this->send_data_(0xFF);
 
+  // Fill the panel memory (the buffer is still white) before Display On, so power-on
+  // shows a blank frame instead of whatever the memory held.
+  this->write_ram_();
+
   // High Power Mode On
   this->send_command_(0x38);
 
@@ -562,7 +566,10 @@ void ST7305RLCD::write_display_() {
   // Ensure display is awake
   this->send_command_(0x38);  // High Power Mode
   this->send_command_(0x29);  // Display On
+  this->write_ram_();
+}
 
+void ST7305RLCD::write_ram_() {
   // Set column address window
   this->send_command_(0x2A);
   this->send_data_(this->col_start_);

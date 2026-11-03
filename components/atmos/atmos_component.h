@@ -38,7 +38,12 @@ class AtmosComponent : public Component {
   void set_report_interval_ms(uint32_t ms) { this->report_ms_ = ms; }
   void set_frame_stats(bool on) { this->frame_stats_ = on; }
   void set_key_interval_ms(uint32_t ms) { this->key_interval_ms_ = ms; }
-  float get_setup_priority() const override { return setup_priority::PROCESSOR; }
+  void set_splash_name(const char *name) { this->splash_name_ = name; }
+  void set_splash_subtitle(const char *text) { this->splash_subtitle_ = text; }
+  void set_splash_timeout_ms(uint32_t ms) { this->splash_timeout_ms_ = ms; }
+  // After the display (PROCESSOR) so the panel is ready for the splash; before the
+  // number and switch entities (PROCESSOR - 1), which apply settings to it.
+  float get_setup_priority() const override { return setup_priority::PROCESSOR - 0.5f; }
   void setup() override;
   void dump_config() override;
   void advance(int direction);
@@ -60,6 +65,8 @@ class AtmosComponent : public Component {
   static void display_event_(lv_event_t *e);
   void on_display_event_(lv_event_code_t code);
   void frame_();
+  void wait_ready_();
+  bool ready_() const;
   void report_();
 
   st7305_rlcd::ST7305RLCD *panel_{nullptr};
@@ -67,6 +74,10 @@ class AtmosComponent : public Component {
   uint32_t period_us_{59000};
   uint32_t report_ms_{10000};
   bool started_{false};
+  const char *splash_name_{"Atmos"};
+  const char *splash_subtitle_{"Visualizing Air Quality"};
+  uint32_t splash_timeout_ms_{20000};
+  uint32_t splash_ms_{0};  // when the splash was shown
   bool frame_stats_{false};
   uint32_t key_interval_ms_{250};
   uint32_t last_key_ms_{0};

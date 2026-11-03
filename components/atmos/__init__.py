@@ -35,6 +35,9 @@ CONF_FRAME_PERIOD = "frame_period"
 CONF_REPORT_INTERVAL = "report_interval"
 CONF_FRAME_STATS = "frame_stats"
 CONF_KEY_INTERVAL = "key_interval"
+CONF_SPLASH_NAME = "splash_name"
+CONF_SPLASH_SUBTITLE = "splash_subtitle"
+CONF_SPLASH_TIMEOUT = "splash_timeout"
 CONF_READING_SELECT = "reading_select"
 CONF_AUTO_ADVANCE = "auto_advance"
 CONF_HOLD_TIME = "hold_time"
@@ -67,7 +70,7 @@ LVGL_VERSION = "9.5.0"
 # The repository root: components/atmos/__init__.py -> ../../desktop. ESPHome clones the
 # whole repository for a git source, so this also works from github://.
 UI_DIR = Path(__file__).resolve().parents[2] / "desktop"
-UI_FILES = ("atmos.c", "atmos.h", "ui_fonts.c", "ui_fonts.h", "ui_theme.h", "lv_conf.h")
+UI_FILES = ("atmos.c", "atmos.h", "ui_fonts.c", "ui_fonts.h", "ui_theme.h", "splash_badge.h", "lv_conf.h")
 
 atmos_ns = cg.esphome_ns.namespace("atmos")
 AtmosComponent = atmos_ns.class_("AtmosComponent", cg.Component)
@@ -146,6 +149,14 @@ CONFIG_SCHEMA = cv.Schema(
         # bench.ps1 and the simulator's --hw-pace) every report_interval.
         cv.Optional(CONF_FRAME_STATS, default=False): cv.boolean,
         # Minimum time between accepted atmos.next/atmos.previous presses.
+        # Boot splash: this name over a "Made for ESPHome" badge, held until a Home
+        # Assistant client connects (or the network, without the API), at most this long.
+        cv.Optional(CONF_SPLASH_NAME, default="Atmos"): cv.All(cv.string, cv.Length(min=1, max=24)),
+        # Line under the name; an empty string shows none.
+        cv.Optional(CONF_SPLASH_SUBTITLE, default="Visualizing Air Quality"): cv.All(cv.string, cv.Length(max=40)),
+        cv.Optional(CONF_SPLASH_TIMEOUT, default="20s"): cv.All(
+            cv.positive_time_period_milliseconds, cv.Range(max=cv.TimePeriod(minutes=5))
+        ),
         cv.Optional(CONF_KEY_INTERVAL, default="250ms"): cv.All(
             cv.positive_time_period_milliseconds, cv.Range(max=cv.TimePeriod(seconds=5))
         ),
@@ -194,6 +205,9 @@ async def to_code(config):
     cg.add(var.set_report_interval_ms(config[CONF_REPORT_INTERVAL].total_milliseconds))
     cg.add(var.set_frame_stats(config[CONF_FRAME_STATS]))
     cg.add(var.set_key_interval_ms(config[CONF_KEY_INTERVAL].total_milliseconds))
+    cg.add(var.set_splash_name(config[CONF_SPLASH_NAME]))
+    cg.add(var.set_splash_subtitle(config[CONF_SPLASH_SUBTITLE]))
+    cg.add(var.set_splash_timeout_ms(config[CONF_SPLASH_TIMEOUT].total_milliseconds))
 
     for index, (key, _) in enumerate(READINGS):
         if key in config[CONF_SENSORS]:
