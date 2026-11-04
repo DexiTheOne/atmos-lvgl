@@ -204,7 +204,8 @@ static void sync_layer(lv_layer_t *target){
    dominated device frame time. Identical pixels to LVGL's own fill. */
 static lv_obj_t *scene_canvas[2];
 static const lv_draw_buf_t *scene_canvas_buf(int i){return scene_canvas[i]?lv_canvas_get_draw_buf(scene_canvas[i]):NULL;}
-static bool direct_fill(int x,int y,int w,int h,bool paper){
+enum{FILL_INK,FILL_PAPER,FILL_INVERT};
+static bool direct_fill(int x,int y,int w,int h,int mode){
     lv_draw_buf_t *buf=layer->draw_buf;
     if(!buf || buf->header.cf!=LV_COLOR_FORMAT_I1)return false;
     /* Reject far-off coordinates (e.g. from a NaN cast) before any arithmetic can overflow. */
@@ -231,18 +232,21 @@ static bool direct_fill(int x,int y,int w,int h,bool paper){
         uint8_t *row=lv_draw_buf_goto_xy(buf,0,(uint32_t)(yy-b.y1));
         int first=x1>>3,last=x2>>3;
         uint8_t head=(uint8_t)(0xff>>(x1&7)),tail=(uint8_t)(0xff<<(7-(x2&7)));
-        if(first==last){
-            uint8_t m=head&tail;row[first]=paper?(uint8_t)(row[first]|m):(uint8_t)(row[first]&~m);
+        if(first==last){head&=tail;tail=0;}
+        if(mode==FILL_INVERT){
+            row[first]^=head;for(int i=first+1;i<last;i++)row[i]=(uint8_t)~row[i];
+            if(last>first)row[last]^=tail;
             continue;
         }
+        bool paper=mode==FILL_PAPER;
         row[first]=paper?(uint8_t)(row[first]|head):(uint8_t)(row[first]&~head);
         if(last>first+1)memset(row+first+1,paper?0xff:0x00,(size_t)(last-first-1));
-        row[last]=paper?(uint8_t)(row[last]|tail):(uint8_t)(row[last]&~tail);
+        if(last>first)row[last]=paper?(uint8_t)(row[last]|tail):(uint8_t)(row[last]&~tail);
     }
     return true;
 }
 static void rect(int x,int y,int w,int h,bool reverse,int radius){
-    if(radius==0 && direct_fill(x,y+(int)offset,w,h,reverse))return;
+    if(radius==0 && direct_fill(x,y+(int)offset,w,h,reverse?FILL_PAPER:FILL_INK))return;
     lv_draw_rect_dsc_t d;lv_draw_rect_dsc_init(&d);
     d.bg_color=color(reverse);d.bg_opa=255;d.radius=radius;
     lv_area_t a={x,y+(int)offset,x+w-1,y+(int)offset+h-1};lv_draw_rect(layer,&d,&a);
@@ -307,6 +311,53 @@ static lv_area_t header_ink_bounds(const char *text,const lv_font_t *font){
     }
     return bounds;
 }
+/* Wi-Fi strength in the badge, in paper: a dot and one arc per bar, so a weak signal
+   is a small symbol. Disconnected shows the arcs as 1 px outlines and a bold X. */
+static int wifi_bars=-1;
+/* Hand-drawn so the arcs end cleanly at 45 degrees and the dot is round:
+   d = dot, 1-3 = the arc lit from that many bars. */
+static const char wifi_glyph[UI_WIFI_H][UI_WIFI_W+1]={
+    ".......333333333.......",
+    "....333333333333333....",
+    "..33333.........33333..",
+    ".3333.............3333.",
+    "333.....2222222.....333",
+    ".....2222222222222.....",
+    "....2222.......2222....",
+    "...222...........222...",
+    ".........11111.........",
+    ".......111111111.......",
+    "......111.....111......",
+    ".......................",
+    "..........ddd..........",
+    ".........ddddd.........",
+    ".........ddddd.........",
+    "..........ddd.........."
+};
+/* The disconnected X, symmetric both ways. */
+static const char wifi_x[UI_WIFI_X_SIZE][UI_WIFI_X_SIZE+1]={
+    "##....##","###..###",".######.","..####..","..####..",".######.","###..###","##....##"};
+static void wifi_icon(void){
+    int x0=UI_WIFI_X,y0=UI_PM_HEADER_Y+(UI_BADGE_HEIGHT-UI_WIFI_H)/2;
+    for(int y=0;y<UI_WIFI_H;y++){
+        int run=-1;
+        for(int x=0;x<=UI_WIFI_W;x++){
+            bool on=false;
+            if(x<UI_WIFI_W){
+                char c=wifi_glyph[y][x];
+                /* Disconnected: every arc as a 1 px outline (its top edge), with an X beside
+                   the stem in the empty bottom-right corner, a pixel clear of the arcs. */
+                int xs=x-(UI_WIFI_W-UI_WIFI_X_SIZE),ys=y-(UI_WIFI_H-UI_WIFI_X_SIZE);
+                if(wifi_bars<0 && xs>=-1 && ys>=-1)
+                    on=xs>=0 && ys>=0 && wifi_x[ys][xs]=='#';
+                else if(c=='d')on=true;
+                else if(c!='.')on=wifi_bars<0?(y==0 || wifi_glyph[y-1][x]!=c):c-'0'<=wifi_bars;
+            }
+            if(on && run<0)run=x;
+            if(!on && run>=0){rect(x0+run,y0+y,x-run,1,true,0);run=-1;}
+        }
+    }
+}
 static int ink_width(const char *text,int size);
 static void detail_header(const char *title,const char *badge){
     /* Titles are capitals: centre the cap height, so a tail (the Q in
@@ -317,12 +368,16 @@ static void detail_header(const char *title,const char *badge){
     dashboard_text(title,UI_MARGIN-ink.x1,title_y,UI_FONT_TITLE,false);
     rect(UI_MARGIN,UI_HEADER_BOTTOM,UI_WIDTH-2*UI_MARGIN,UI_DIVIDER,false,0);
     if(!badge)return;
+    /* The badge splits into the rating's box and the Wi-Fi icon's box, each centred. */
+    int text_w=UI_RATING_W;
     /* Long configured texts drop to the small font. */
-    int badge_size=ink_width(badge,16)<=UI_BADGE_WIDTH-6?16:12;
+    int badge_size=ink_width(badge,16)<=text_w-6?16:12;
     ink=header_ink_bounds(badge,dashboard_font(badge_size));
-    int text_x=UI_BADGE_X+(UI_BADGE_WIDTH-(ink.x2-ink.x1+1))/2-ink.x1;
+    int text_x=UI_BADGE_X+(text_w-(ink.x2-ink.x1+1))/2-ink.x1;
     int text_y=UI_PM_HEADER_Y+(UI_BADGE_HEIGHT-(ink.y2-ink.y1+1))/2-ink.y1;
-    rect(UI_BADGE_X,UI_PM_HEADER_Y,UI_BADGE_WIDTH,UI_BADGE_HEIGHT,false,0);
+    rect(UI_BADGE_X,UI_PM_HEADER_Y,UI_RATING_W,UI_BADGE_HEIGHT,false,0);
+    rect(UI_WIFI_BOX_X,UI_PM_HEADER_Y,UI_WIFI_BOX_W,UI_BADGE_HEIGHT,false,0);
+    wifi_icon();
     dashboard_text(badge,text_x,text_y,badge_size,true);
 }
 static void dashboard_header(void){
@@ -508,7 +563,7 @@ static float chart_nice_step(float value){
 static void chart_fill_span(int x,int top,int bottom){
     if(top>=bottom)return;
     _Static_assert(UI_COLOR_CHART_FILL==UI_COLOR_PAPER,"direct chart fill assumes paper");
-    if(direct_fill(x,top,1,bottom-top,true))return;
+    if(direct_fill(x,top,1,bottom-top,FILL_PAPER))return;
     lv_draw_rect_dsc_t fill;lv_draw_rect_dsc_init(&fill);
     fill.bg_color=lv_color_hex(UI_COLOR_CHART_FILL);fill.bg_opa=255;
     lv_area_t area={x,top,x,bottom-1};lv_draw_rect(layer,&fill,&area);
@@ -613,13 +668,15 @@ static float chart_interpolate(const sample *samples,int n,double at,int key,con
    falls rather than jumping. The previous scale is frozen at the change. */
 static int chart_from_key=-1,chart_to_key=-1;
 static float chart_from_low,chart_from_high,chart_blend_age=UI_CHART_BLEND_TIME;
+/* The first sample's trace rises from the chart floor with the same easing. */
+static float chart_rise_age=UI_CHART_BLEND_TIME;
 static float chart_y(float value,float low,float high){
     return clamp(chart_bottom-(value-low)/(high-low)*(chart_bottom-UI_CHART_TOP),UI_CHART_TOP,chart_bottom);
 }
 static void history_graph(const sample *samples,int n,int key,const float *weights,
                           const char *name,const char *unit,float low,float high){
     bool blend=!weights && chart_blend_age<UI_CHART_BLEND_TIME && key==chart_to_key && chart_from_key>=0;
-    float q=ease(chart_blend_age/UI_CHART_BLEND_TIME);
+    float q=ease(chart_blend_age/UI_CHART_BLEND_TIME),rise=ease(chart_rise_age/UI_CHART_BLEND_TIME);
     history_panel();
     chart_geometry();
     for(int i=0;i<=UI_CHART_Y_INTERVALS;i++){
@@ -632,8 +689,10 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
     if(last-first>history_window)first=last-history_window;
     double span=last-first;
     if(!n){chart_axes(name,unit,span);history_caption(span);return;}
+    /* A single sample spans the full width as a flat trace, so the chart does
+       not start as one column and then jump to full width at the second. */
     float previous=NAN,trace[UI_CHART_RIGHT+1];
-    int begin=span>0?chart_left:UI_CHART_RIGHT;
+    int begin=chart_left;
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
         double at=span>0?first+(last-first)*(x-chart_left)/(double)(UI_CHART_RIGHT-chart_left):last;
         float value=chart_interpolate(samples,n,at,key,weights);
@@ -647,6 +706,7 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
             }
         }
         if(!valid){trace[x-chart_left]=NAN;continue;}
+        y=mix(chart_bottom,y,rise);
         chart_fill_span(x,(int)ceil(y),chart_bottom);
         trace[x-chart_left]=y;
     }
@@ -704,6 +764,25 @@ static void start_chart_blend(int s,int from,int to){
     selection_chart_range(from,&chart_from_low,&chart_from_high);
     chart_from_key=from;chart_to_key=to;chart_blend_age=0;
 }
+/* Changing the underlined reading first wipes the old bar away left to right, then
+   draws the new one left to right, each over half of UI_UNDERLINE_TIME. Like the
+   chart blend, off-screen changes switch at once. */
+static float underline_age=UI_UNDERLINE_TIME;static int underline_from=-1;
+static void start_underline(int s,int from){
+    if(s!=scene || moving){underline_age=UI_UNDERLINE_TIME;return;}
+    /* A change mid-animation retracts whichever bar is showing now. */
+    if(underline_age<UI_UNDERLINE_TIME/2)from=underline_from;
+    underline_from=from;underline_age=0;
+}
+/* Visible pixel span [*x0,*x1) of a w-pixel underline under `item`, given the
+   selected one; both edges travel left to right. Returns false when nothing shows. */
+static bool underline_span(int item,int selected,int w,int *x0,int *x1){
+    float a=0,b=item==selected?1:0,half=UI_UNDERLINE_TIME/2;
+    if(underline_age<half){a=ease(underline_age/half);b=item==underline_from?1:0;}
+    else if(underline_age<UI_UNDERLINE_TIME)b=item==selected?ease((underline_age-half)/half):0;
+    *x0=(int)lroundf(w*a);*x1=(int)lroundf(w*b);
+    return *x1>*x0;
+}
 /* The reading and unit share the header title's column: the largest value font
    whose widest reading ("40.0k", or four digits) fits the title's ink width. */
 static int co2_title_width(void){return ink_width("CARBON DIOXIDE",UI_FONT_TITLE);}
@@ -760,7 +839,7 @@ void atmos_select_pm(int size){
     }else pm_chart_range(history,count,pm_from_weights,&pm_from_low,&pm_from_high);
     if(pm_blend_age>=UI_PM_TRANSITION_TIME){memcpy(pm_snapshot,history,sizeof history);pm_snapshot_count=count;}
     pm_chart_range(pm_snapshot,pm_snapshot_count,pm_to_weights,&pm_to_low,&pm_to_high);
-    pm_selected=size;pm_blend_age=0;data_version++;lv_obj_invalidate(surface);
+    start_underline(2,pm_selected);pm_selected=size;pm_blend_age=0;data_version++;lv_obj_invalidate(surface);
 }
 void atmos_cycle_pm(int direction){if(scene==2 && !moving)atmos_select_pm(pm_selected+direction);}
 static int climate_row_at(int y);
@@ -911,6 +990,23 @@ static void pm_layout(int *y,int *value_y){
     y[0]=top+gap+(spare-3*gap)/2;y[1]=y[0]+dh+UI_TEXT_GAP;y[2]=y[1]+uh+gap;
     value_y[0]=y[0]-digits.y1;value_y[1]=y[1]-unit.y1;
 }
+/* The selected card's fill wipes like the underlines (old card clears, then the
+   new one fills, both left to right), behind a 45-degree edge with its top leading. */
+static void pm_card_fill(int x,int y,int card){
+    int w=UI_PM_CARD_WIDTH-2,h=UI_PM_CARD_HEIGHT-2,r=UI_PM_CARD_RADIUS-1,d0,d1;
+    if(!layer->draw_buf || layer->draw_buf->header.cf!=LV_COLOR_FORMAT_I1){
+        /* Inversion needs a 1-bit layer; other formats show outlines only. */
+        return;
+    }
+    if(!underline_span(card,pm_selected,w+h,&d0,&d1))return;
+    x++;y++;
+    for(int i=0;i<h;i++){
+        float dy=fmaxf(0,fmaxf(r-(i+.5f),(i+.5f)-(h-r)));
+        int inset=dy>0?(int)lroundf(r-sqrtf(fmaxf(0,r*r-dy*dy))):0;
+        int lo=LV_MAX(inset,d0-i),hi=LV_MIN(w-inset,d1-i); /* sweep distance is x + row */
+        if(hi>lo)direct_fill(x+lo,y+i+(int)offset,hi-lo,1,FILL_INVERT);
+    }
+}
 static void draw_pm_detail(void){
     const char *unit="\xc2\xb5" "g/m\xc2\xb3";
     detail_header("PARTICLES",rating_text(rate_pm(pm_selected)));
@@ -926,13 +1022,16 @@ static void draw_pm_detail(void){
     static const int card_size[]={UI_PM_LABEL_SIZE,UI_PM_CARD_VALUE_SIZE,UI_PM_CARD_UNIT_SIZE};
     int row[3];stack_rows(3,card_canon,card_size,UI_PM_CARD_ROW_GAP,y[2]+UI_PM_CARD_HEIGHT/2,row,NULL);
     for(int i=0;i<4;i++){
-        int x=UI_MARGIN+i*(UI_PM_CARD_WIDTH+UI_PM_CARD_GAP),mid=x+UI_PM_CARD_WIDTH/2;bool selected=i==pm_selected;
+        int x=UI_MARGIN+i*(UI_PM_CARD_WIDTH+UI_PM_CARD_GAP),mid=x+UI_PM_CARD_WIDTH/2;
+        /* Draw every card unselected, then invert the filled part of its inside, so
+           the text flips to paper exactly where the fill covers it. */
         pill(x,y[2],UI_PM_CARD_WIDTH,UI_PM_CARD_HEIGHT,UI_PM_CARD_RADIUS,false);
-        if(!selected)pill(x+1,y[2]+1,UI_PM_CARD_WIDTH-2,UI_PM_CARD_HEIGHT-2,UI_PM_CARD_RADIUS-1,true);
-        centered_text(pm_labels[i],mid,row[0],UI_PM_LABEL_SIZE,selected);
+        pill(x+1,y[2]+1,UI_PM_CARD_WIDTH-2,UI_PM_CARD_HEIGHT-2,UI_PM_CARD_RADIUS-1,true);
+        centered_text(pm_labels[i],mid,row[0],UI_PM_LABEL_SIZE,false);
         format_reading(value,sizeof value,pm_value(sensor,i)<0?NAN:pm_value(sensor,i),1,false);
-        centered_text(value,mid,row[1],UI_PM_CARD_VALUE_SIZE,selected);
-        centered_text(unit,mid,row[2],UI_PM_CARD_UNIT_SIZE,selected);
+        centered_text(value,mid,row[1],UI_PM_CARD_VALUE_SIZE,false);
+        centered_text(unit,mid,row[2],UI_PM_CARD_UNIT_SIZE,false);
+        pm_card_fill(x,y[2],i);
     }
     pm_history_chart();
 }
@@ -1178,9 +1277,10 @@ static void draw_climate_detail(void){
         /* As on Gases, the underlined label names the reading the history chart shows. */
         /* Centred in the space between the label's descenders and the row's rule
            (or the history panel), so it touches neither. */
-        if(row==climate_selected){
+        int x0,x1;
+        if(underline_span(row,climate_selected,ink.x2-ink.x1+1,&x0,&x1)){
             int below=b-label_base+ink.y2+1,limit=row<2?l.rule[row]:UI_HISTORY_PANEL_Y;
-            rect(l.label_x,below+(limit-below-UI_GAS_UNDERLINE)/2,ink.x2-ink.x1+1,UI_GAS_UNDERLINE,false,0);
+            rect(l.label_x+x0,below+(limit-below-UI_GAS_UNDERLINE)/2,x1-x0,UI_GAS_UNDERLINE,false,0);
         }
         ink=header_ink_bounds(l.value[row],dashboard_font(UI_CLIMATE_VALUE_SIZE));
         int value_x=l.value_center-(ink.x1+ink.x2+1)/2;
@@ -1306,10 +1406,10 @@ static void draw_gas_detail(void){
         int center=left+width[col]/2;
         centered_text(col?"NOx":"VOC",center,top-label.y1,UI_GAS_LABEL_SIZE,false);
         /* The underlined label names the channel the history chart shows. */
-        if(col==gas_selected){
-            lv_area_t a=header_ink_bounds(col?"NOx":"VOC",dashboard_font(UI_GAS_LABEL_SIZE));
-            int w=a.x2-a.x1+1;
-            rect(center-w/2,top+label_h+UI_GAS_UNDERLINE_GAP,w,UI_GAS_UNDERLINE,false,0);
+        lv_area_t a=header_ink_bounds(col?"NOx":"VOC",dashboard_font(UI_GAS_LABEL_SIZE));
+        int w=a.x2-a.x1+1,x0,x1;
+        if(underline_span(col,gas_selected,w,&x0,&x1)){
+            rect(center-w/2+x0,top+label_h+UI_GAS_UNDERLINE_GAP,x1-x0,UI_GAS_UNDERLINE,false,0);
         }
         centered_text(values[col],center,value_top-digits.y1,UI_GAS_VALUE_SIZE,false);
         centered_text("Index",center,unit_top-unit.y1,UI_CLIMATE_UNIT_SIZE,false);
@@ -1758,7 +1858,8 @@ static lv_area_t animated_area(int which){
     }
 }
 static void invalidate_frame(void){
-    if(moving || full_dirty || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME){
+    if(moving || full_dirty || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME ||
+       chart_rise_age<UI_CHART_BLEND_TIME || underline_age<UI_UNDERLINE_TIME){
         lv_obj_invalidate(surface);full_dirty=false;
     }else if(scene!=2 || (int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick){
         lv_area_t a=animated_area(scene);lv_obj_invalidate_area(surface,&a);
@@ -1799,6 +1900,7 @@ static void take_sample(void){
         memmove(history+drop,history+drop+1,(--count-drop)*sizeof *history);
     }
     history[count++]=(sample){t,sensor};full_dirty=true;data_version++;
+    if(count==1)chart_rise_age=0;
 }
 /* Boot splash. The ink of the name and the badge forms one group centred on the screen. */
 static const char *splash_name="Atmos",*splash_subtitle="Visualizing Air Quality";
@@ -1883,7 +1985,7 @@ void atmos_init(void){
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
     sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=CYCLE_FIRST;queued=-1;pending_advance=0;
-    pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
+    pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=chart_rise_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;underline_age=UI_UNDERLINE_TIME;underline_from=-1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
     gas_intensity[0]=gas_level(0);gas_intensity[1]=gas_level(1);
     for(int j=0;j<UI_HCHO_MOLECULES;j++)hcho_grow[j]=j<hcho_target()?1:0;
     t=age=movement=anim_t=0;changed=-10;next_sample=2;paused=hidden=external_data=moving=false;automatic=true;
@@ -1906,11 +2008,11 @@ void atmos_init(void){
 }
 static void select_gas(int lane){
     if(lane==gas_selected)return;
-    start_chart_blend(3,2+gas_selected,2+lane);gas_selected=lane;full_dirty=true;data_version++;lv_obj_invalidate(surface);
+    start_chart_blend(3,2+gas_selected,2+lane);start_underline(3,gas_selected);gas_selected=lane;full_dirty=true;data_version++;lv_obj_invalidate(surface);
 }
 static void select_climate(int row){
     if(row==climate_selected)return;
-    start_chart_blend(4,4+climate_selected,4+row);climate_selected=row;full_dirty=true;data_version++;lv_obj_invalidate(surface);
+    start_chart_blend(4,4+climate_selected,4+row);start_underline(4,climate_selected);climate_selected=row;full_dirty=true;data_version++;lv_obj_invalidate(surface);
 }
 /* Without touch, automatic cycling steps through each page's readings in reading
    order (Gases VOC then NOx, Particles left to right, Climate top to bottom),
@@ -1932,7 +2034,8 @@ static float transition_duration(int from,int to){
     return seconds[from];
 }
 static void prerender_step(void){
-    if(!automatic || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME){pre_stage=0;return;}
+    if(!automatic || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME ||
+       chart_rise_age<UI_CHART_BLEND_TIME || underline_age<UI_UNDERLINE_TIME){pre_stage=0;return;}
     double start=t+(hold-age);
     int to=cycle_next(scene,1);
     if(pre_from!=scene || pre_to!=to || pre_version!=data_version || fabs(pre_start-start)>1e-4){
@@ -1949,6 +2052,8 @@ void atmos_step(double dt){
     /* Limit catch-up after suspension; normal operation advances at active time. */
     dt=fmin(dt,.1f);t+=dt;prerendered_last_step=-1;
     pm_blend_age=fmin(UI_PM_TRANSITION_TIME,pm_blend_age+dt);chart_blend_age=fminf(UI_CHART_BLEND_TIME,chart_blend_age+(float)dt);
+    chart_rise_age=fminf(UI_CHART_BLEND_TIME,chart_rise_age+(float)dt);
+    underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)dt);
     float concentration=isfinite(sensor.pm10)?clamp(sensor.pm10,0,UI_PM_DENSITY_LIMIT):0;
     float density_target=UI_PM_DENSITY_MIN+(UI_PM_PARTICLE_MAX-UI_PM_DENSITY_MIN)*
         concentration/(concentration+UI_PM_DENSITY_HALF);
@@ -1962,7 +2067,7 @@ void atmos_step(double dt){
     if(moving){
         movement+=dt;
         if(movement>=duration){
-            scene=destination;moving=intro=false;age=0;full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;
+            scene=destination;moving=intro=false;age=0;full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;underline_age=UI_UNDERLINE_TIME;
             /* Reset the next page now, before its snapshot is pre-rendered, so
                automatic cycling arrives on its first reading. */
             if(automatic){int next=cycle_next(scene,1);if(next!=scene)auto_select(next,0);}
@@ -2009,6 +2114,13 @@ void atmos_set_scenario(int value){
     scenario=value;origin=sensor;target=profiles[value];changed=t;external_data=false;
 }
 void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;}
+void atmos_set_wifi(int bars){
+    bars=bars<0?-1:bars>3?3:bars;
+    if(bars==wifi_bars)return;
+    wifi_bars=bars;full_dirty=true;data_version++;if(surface)lv_obj_invalidate(surface);
+}
+int atmos_wifi(void){return wifi_bars;}
+int atmos_wifi_bars(float dbm){return isnan(dbm)?-1:dbm>=-60.0f?3:dbm>=-70.0f?2:dbm>=-80.0f?1:0;}
 void atmos_toggle_pause(void){paused=!paused;}
 void atmos_toggle_auto(void){automatic=!automatic;}
 void atmos_set_auto(bool on){automatic=on;}

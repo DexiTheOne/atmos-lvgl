@@ -7,6 +7,9 @@
 #ifdef USE_NETWORK
 #include "esphome/components/network/util.h"
 #endif
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
 #include <esp_heap_caps.h>
 
 extern "C" {
@@ -122,21 +125,62 @@ void AtmosComponent::advance(int direction) {
     return;
   this->key_pressed_ = true;
   this->last_key_ms_ = now;
+  int before = atmos_reading();
   atmos_advance(direction);
+  // During a transition the press waits for the arriving page; adopt the reading it moves to.
+  this->adopt_ = true;
+  this->adopt_from_ = before;
+  this->publish_selection_();
 }
 
-void AtmosComponent::select_reading(int reading) {
-  if (!this->started_) {
-    this->pending_reading_ = reading;
-    return;
+void AtmosComponent::select_option(int option) {
+  if (option <= 0) {
+    if (this->auto_switch_ != nullptr)
+      this->auto_switch_->turn_on();  // publishes the switch and calls set_auto()
+    else
+      this->set_auto(true);
+  } else {
+    int reading = option - 1;
+    this->manual_ = reading;
+    this->adopt_ = false;
+    if (this->started_)
+      atmos_select_reading(reading);
+    else
+      this->pending_reading_ = reading;
   }
-  atmos_select_reading(reading);
+  this->publish_selection_();
 }
 
 void AtmosComponent::set_auto(bool on) {
   this->auto_ = on;
+  this->manual_ = -1;
+  this->adopt_ = false;
   if (this->started_)
     atmos_set_auto(on);
+  this->publish_selection_();
+}
+
+void AtmosComponent::publish_selection_() {
+  if (this->reading_select_ == nullptr)
+    return;
+  int reading = this->started_ ? atmos_reading() : this->pending_reading_;  // -1 on the overview
+  if (this->adopt_ && reading != this->adopt_from_) {
+    this->manual_ = reading;
+    this->adopt_ = false;
+  }
+  int option;
+  if (!this->auto_) {
+    option = reading >= 0 ? reading + 1 : this->published_option_;  // the overview keeps the last value
+  } else {
+    // The chosen reading has expired once cycling moves the display off it.
+    if (this->manual_ >= 0 && reading != this->manual_ && !this->adopt_)
+      this->manual_ = -1;
+    option = this->manual_ >= 0 ? this->manual_ + 1 : 0;
+  }
+  if (option >= 0 && option != this->published_option_) {
+    this->published_option_ = option;
+    this->reading_select_->publish_state((size_t) option);
+  }
 }
 
 // Hold, history span and bands are model settings that atmos_init() keeps, so they
@@ -290,6 +334,11 @@ void AtmosComponent::frame_() {
     this->missed_steps_ += steps - 1;
     if (this->has_sensors_ && this->values_dirty_)
       this->push_readings_();
+#ifdef USE_WIFI
+    // The badge's Wi-Fi icon; atmos redraws only when the bar count changes.
+    auto *wifi = wifi::global_wifi_component;
+    atmos_set_wifi(wifi != nullptr && wifi->is_connected() ? atmos_wifi_bars(wifi->wifi_rssi()) : -1);
+#endif
     uint32_t step_start = micros();
     atmos_step(steps * this->period_us_ / 1e6);
     int pre = atmos_step_prerendered();
@@ -301,11 +350,7 @@ void AtmosComponent::frame_() {
     lv_refr_now(this->disp_);  // render now, not on LVGL's own refresh timer
   }
   lv_timer_handler();
-  int reading = atmos_reading();  // -1 on the overview
-  if (this->reading_select_ != nullptr && reading >= 0 && reading != this->published_reading_) {
-    this->published_reading_ = reading;
-    this->reading_select_->publish_state((size_t) reading);
-  }
+  this->publish_selection_();
   bool moving = atmos_is_moving();
   if (this->frame_stats_ && this->was_moving_ && !moving) {
     this->transition_index_++;

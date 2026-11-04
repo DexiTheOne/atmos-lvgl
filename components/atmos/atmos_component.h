@@ -51,7 +51,8 @@ class AtmosComponent : public Component {
   // Home Assistant controls. Settings made before the UI starts are applied when it does.
   void set_reading_select(AtmosReadingSelect *s) { this->reading_select_ = s; }
   void set_auto_switch(AtmosAutoSwitch *s) { this->auto_switch_ = s; }
-  void select_reading(int reading);
+  /* Select option: 0 "Auto advance" (turns cycling on), else reading option - 1. */
+  void select_option(int option);
   void set_auto(bool on);
   void set_hold(float seconds);
   void set_history_window(float seconds);
@@ -106,18 +107,25 @@ class AtmosComponent : public Component {
 
   AtmosReadingSelect *reading_select_{nullptr};
   AtmosAutoSwitch *auto_switch_{nullptr};
-  int pending_reading_{-1}, published_reading_{-1};
+  int pending_reading_{-1}, published_option_{-1};
+  // While cycling, the select shows a reading only while the reading chosen by the
+  // select or a key (manual_) is on screen, otherwise "Auto advance", so cycling
+  // does not record a state change per step. A key press during a transition takes
+  // effect on arrival: adopt_ waits for the reading to move off adopt_from_.
+  int manual_{-1}, adopt_from_{-1};
+  bool adopt_{false};
   bool auto_{true};
+  void publish_selection_();
   float values_[16];  // latest value per reading, NAN until reported
   bool has_sensors_{false}, values_dirty_{false};
   void push_readings_();
 };
 
-/* Drop-down of the readings: choosing one moves to its page and underlines/charts it.
-   Follows the display as keys and automatic cycling move the selection. */
+/* Drop-down of "Auto advance" and the readings: choosing a reading moves to its page and
+   underlines/charts it; choosing "Auto advance" turns cycling on. */
 class AtmosReadingSelect : public select::Select, public Parented<AtmosComponent> {
  protected:
-  void control(size_t index) override { this->parent_->select_reading((int) index); }
+  void control(size_t index) override { this->parent_->select_option((int) index); }
 };
 
 class AtmosAutoSwitch : public switch_::Switch, public Component, public Parented<AtmosComponent> {

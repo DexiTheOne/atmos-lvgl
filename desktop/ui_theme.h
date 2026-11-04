@@ -28,6 +28,14 @@
 #define UI_BADGE_HEIGHT 30 /* Even, like the title and badge ink heights, so both centre exactly. */
 #define UI_BADGE_WIDTH 128
 #define UI_BADGE_X (UI_WIDTH-UI_MARGIN-UI_BADGE_WIDTH)
+#define UI_WIFI_W 23 /* Wi-Fi icon, centred in its own black box at the badge's right end. */
+#define UI_WIFI_H 16
+#define UI_WIFI_X_SIZE 8 /* The disconnected X, in the icon's bottom-right corner. */
+#define UI_WIFI_BOX_W 35 /* Odd like the icon, so it centres exactly. */
+#define UI_WIFI_GAP 4 /* Paper between the rating box and the Wi-Fi box. */
+#define UI_WIFI_BOX_X (UI_BADGE_X+UI_BADGE_WIDTH-UI_WIFI_BOX_W)
+#define UI_WIFI_X (UI_WIFI_BOX_X+(UI_WIFI_BOX_W-UI_WIFI_W)/2)
+#define UI_RATING_W (UI_WIFI_BOX_X-UI_WIFI_GAP-UI_BADGE_X) /* The rating's box, left of the gap. */
 #define UI_FLOWER_RADIUS 69
 #define UI_FLOWER_RING 6
 #define UI_FLOWER_PETALS 6
@@ -249,6 +257,8 @@
 #define UI_GAS_LABEL_SIZE UI_FONT_SECONDARY
 #define UI_GAS_UNDERLINE 2
 #define UI_GAS_UNDERLINE_GAP 4
+/* Retract the old underline, then draw the new one (half each). */
+#define UI_UNDERLINE_TIME UI_CHART_BLEND_TIME
 #define UI_GAS_RIBBON_LABEL_X 230
 #define UI_GAS_RIBBON_LABEL_Y 45
 #define UI_GAS_RIBBON_LEFT (UI_GAS_SIDE_INSET+UI_GAS_COLUMN_STEP+UI_GAS_COLUMN_WIDTH+UI_GAS_COLUMN_GAP)

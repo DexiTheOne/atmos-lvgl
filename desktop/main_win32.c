@@ -151,6 +151,7 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key==VK_TAB || key==VK_OEM_6)atmos_cycle_pm(1);
         else if(key==VK_OEM_4)atmos_cycle_pm(-1);
         else if(key=='A')atmos_toggle_auto();
+        else if(key=='W')atmos_set_wifi(atmos_wifi()<=-1?3:atmos_wifi()-1); /* 3, 2, 1, 0, off */
         else if(key=='H'){hw_pace=!hw_pace;update_title();}
         else if(key=='S')save_bmp("atmos-frame.bmp");
         else if(key=='R')reboot();
@@ -201,18 +202,19 @@ static bool parse_rgb(const char *text,uint32_t *out){
 static void update_title(void){
     if(!window)return;
     char title[200];
-    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | H hw pace | S save | R reboot",
+    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | W wifi | H hw pace | S save | R reboot",
         hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"");
     SetWindowText(window,title);
 }
 int main(int argc,char **argv){
     parse_rgb(getenv("ATMOS_INK"),&ink_rgb);parse_rgb(getenv("ATMOS_PAPER"),&paper_rgb);
     /* Colour options may appear anywhere; the remaining argument selects the mode. */
-    int kept=1;
+    int kept=1,wifi=3; /* The simulator starts connected; W steps the strength down. */
     for(int i=1;i<argc;i++){
         if(strncmp(argv[i],"--ink=",6)==0){if(!parse_rgb(argv[i]+6,&ink_rgb)){fprintf(stderr,"Bad --ink\n");return 2;}}
         else if(strcmp(argv[i],"--hw-pace")==0)hw_pace=true;
         else if(strncmp(argv[i],"--boot=",7)==0)boot_ms=atof(argv[i]+7);
+        else if(strncmp(argv[i],"--wifi=",7)==0)wifi=atoi(argv[i]+7);
         else if(strncmp(argv[i],"--paper=",8)==0){if(!parse_rgb(argv[i]+8,&paper_rgb)){fprintf(stderr,"Bad --paper\n");return 2;}}
         else argv[kept++]=argv[i];
     }
@@ -233,6 +235,7 @@ int main(int argc,char **argv){
     }
     /* Interactive runs and the intro test start on the boot splash, as the device does. */
     bool intro_test=argc>1 && (strcmp(argv[1],"--test-intro")==0 || strcmp(argv[1],"--capture-intro")==0);
+    atmos_set_wifi(wifi);
     if(argc<=1 || intro_test){atmos_show_splash(NULL);ui_started=false;}
     else atmos_init();
     if(intro_test){
