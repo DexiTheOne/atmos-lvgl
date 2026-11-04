@@ -125,6 +125,22 @@ The device build is an ESPHome external component, so `atmos.c` must compile wit
 - **Frame-rate cap.** The device draws at most one frame per `frame_period` (59 ms, about 17 fps, in the YAML). Frames run from a scheduler timeout, not `loop()` or a high-frequency loop request, so the loop task sleeps between frames and Wi-Fi, the API and sensors get the CPU. The report line's "UI busy" gives the CPU share; 17 fps leaves about a third idle, 20 fps a quarter, 30 fps almost none.
 - **Memory.** All frame buffers are 1-bit: LVGL's display frame (15 KB), two scene canvases and the transition frame (15 KB each), all in internal RAM. LVGL's own allocations (draw tasks, layers, glyph caches) go to PSRAM on the device.
 
+## ESPHome dashboard (OTA from the server)
+
+The ESPHome Device Builder at `10.0.0.82:6052` holds the device's `atmos.yaml` (the device is `atmos`, 10.0.0.230) and its secrets, and builds the component from GitHub at the commit pinned in `external_components` (`github://DexiTheOne/atmos-lvgl@<commit>`). To ship firmware: commit and push, re-pin that commit, then install over OTA.
+
+Policy: talk to the dashboard only through `esphome/dashboard.py`, its WebSocket API client. Never open the dashboard's web page (browser or in-page scripts) and never call its HTTP endpoints directly (curl, fetch, scraping). If a needed command is missing, add it to `dashboard.py` (command names come from the dashboard's own API, e.g. `devices/get_config`, `firmware/install`) rather than writing a one-off client.
+
+```powershell
+.venv-esphome/Scripts/python.exe esphome/dashboard.py list
+.venv-esphome/Scripts/python.exe esphome/dashboard.py get atmos.yaml > atmos.yaml   # edit, then:
+.venv-esphome/Scripts/python.exe esphome/dashboard.py put atmos.yaml atmos.yaml
+.venv-esphome/Scripts/python.exe esphome/dashboard.py install atmos.yaml           # OTA, streams the build log
+.venv-esphome/Scripts/python.exe esphome/dashboard.py call devices/list '{}'
+```
+
+It needs `websockets` in the venv (`.venv-esphome/Scripts/python.exe -m pip install websockets`). The dashboard has no authentication; `ATMOS_DASHBOARD=host:port` selects another server. Edited configs live on the server only; keep secrets there.
+
 ## On-device frame-pacing benchmark
 
 `esphome/` holds an ESPHome external component (`components/atmos`) that copies the UI sources and `lv_conf.h` from `desktop/` at build time and owns LVGL, plus `atmos-bench.yaml`, which runs the UI on a bare ESP32-S3 (currently a Seeed XIAO ESP32-S3 on COM12) through the real device path: LVGL renders a 1-bit frame, the ST7305 driver rearranges the redrawn rows, then a full SPI push to unconnected pins. No panel is needed. `atmos-rlcd.yaml` runs the same benchmark on the real Waveshare ESP32-S3-RLCD-4.2 panel (on COM3; display pins SCK 11, MOSI 12, CS 40, DC 5, RST 41); select it with `-Config atmos-rlcd.yaml`. From the project root:

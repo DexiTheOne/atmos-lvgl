@@ -1007,6 +1007,32 @@ static void pm_card_fill(int x,int y,int card){
         if(hi>lo)direct_fill(x+lo,y+i+(int)offset,hi-lo,1,FILL_INVERT);
     }
 }
+static void pm_cards(int top){
+    const char *unit="\xc2\xb5" "g/m\xc2\xb3";char value[32];
+    /* Card rows: equal gaps between the card edges and each row's ink. */
+    static const char *const card_canon[]={"PM1PM2.5PM4PM10","0123456789","\xc2\xb5" "g/m\xc2\xb3"};
+    static const int card_size[]={UI_PM_LABEL_SIZE,UI_PM_CARD_VALUE_SIZE,UI_PM_CARD_UNIT_SIZE};
+    int row[3];stack_rows(3,card_canon,card_size,UI_PM_CARD_ROW_GAP,top+UI_PM_CARD_HEIGHT/2,row,NULL);
+    for(int i=0;i<4;i++){
+        int x=UI_MARGIN+i*(UI_PM_CARD_WIDTH+UI_PM_CARD_GAP),mid=x+UI_PM_CARD_WIDTH/2;
+        /* Draw every card unselected, then invert the filled part of its inside, so
+           the text flips to paper exactly where the fill covers it. */
+        pill(x,top,UI_PM_CARD_WIDTH,UI_PM_CARD_HEIGHT,UI_PM_CARD_RADIUS,false);
+        pill(x+1,top+1,UI_PM_CARD_WIDTH-2,UI_PM_CARD_HEIGHT-2,UI_PM_CARD_RADIUS-1,true);
+        centered_text(pm_labels[i],mid,row[0],UI_PM_LABEL_SIZE,false);
+        format_reading(value,sizeof value,pm_value(sensor,i)<0?NAN:pm_value(sensor,i),1,false);
+        centered_text(value,mid,row[1],UI_PM_CARD_VALUE_SIZE,false);
+        centered_text(unit,mid,row[2],UI_PM_CARD_UNIT_SIZE,false);
+        pm_card_fill(x,top,i);
+    }
+}
+/* Everything below the particle field: the cards and the history chart. Selection
+   changes redraw only this box (and the field on its own ticks), not the page. */
+static lv_area_t pm_lower_area(void){return (lv_area_t){0,UI_PM_FIELD_BOTTOM+1,UI_WIDTH-1,UI_HEIGHT-1};}
+static void draw_pm_lower(void){
+    int y[3],value_y[2];pm_layout(y,value_y);
+    rect(0,0,UI_WIDTH,UI_HEIGHT,true,0);pm_cards(y[2]);pm_history_chart();
+}
 static void draw_pm_detail(void){
     const char *unit="\xc2\xb5" "g/m\xc2\xb3";
     detail_header("PARTICLES",rating_text(rate_pm(pm_selected)));
@@ -1017,22 +1043,7 @@ static void draw_pm_detail(void){
     int center=pm_value_center();
     centered_text(value,center,value_y[0],pm_value_size(),false);
     centered_text(unit,center,value_y[1],UI_FONT_UNIT,false);pm_particle_field();
-    /* Card rows: equal gaps between the card edges and each row's ink. */
-    static const char *const card_canon[]={"PM1PM2.5PM4PM10","0123456789","\xc2\xb5" "g/m\xc2\xb3"};
-    static const int card_size[]={UI_PM_LABEL_SIZE,UI_PM_CARD_VALUE_SIZE,UI_PM_CARD_UNIT_SIZE};
-    int row[3];stack_rows(3,card_canon,card_size,UI_PM_CARD_ROW_GAP,y[2]+UI_PM_CARD_HEIGHT/2,row,NULL);
-    for(int i=0;i<4;i++){
-        int x=UI_MARGIN+i*(UI_PM_CARD_WIDTH+UI_PM_CARD_GAP),mid=x+UI_PM_CARD_WIDTH/2;
-        /* Draw every card unselected, then invert the filled part of its inside, so
-           the text flips to paper exactly where the fill covers it. */
-        pill(x,y[2],UI_PM_CARD_WIDTH,UI_PM_CARD_HEIGHT,UI_PM_CARD_RADIUS,false);
-        pill(x+1,y[2]+1,UI_PM_CARD_WIDTH-2,UI_PM_CARD_HEIGHT-2,UI_PM_CARD_RADIUS-1,true);
-        centered_text(pm_labels[i],mid,row[0],UI_PM_LABEL_SIZE,false);
-        format_reading(value,sizeof value,pm_value(sensor,i)<0?NAN:pm_value(sensor,i),1,false);
-        centered_text(value,mid,row[1],UI_PM_CARD_VALUE_SIZE,false);
-        centered_text(unit,mid,row[2],UI_PM_CARD_UNIT_SIZE,false);
-        pm_card_fill(x,y[2],i);
-    }
+    pm_cards(y[2]);
     pm_history_chart();
 }
 static void climate_chart(int key,int top){
@@ -1824,7 +1835,10 @@ static void draw(lv_event_t *event){
     if(!moving){
         anim_t=t;
         lv_area_t box=animated_area(scene);
-        if(area_within(&output->_clip_area,&box))draw_animated(scene);else draw_scene(scene);
+        lv_area_t lower=pm_lower_area();
+        if(area_within(&output->_clip_area,&box))draw_animated(scene);
+        else if(scene==2 && area_within(&output->_clip_area,&lower))draw_pm_lower();
+        else draw_scene(scene);
         return;
     }
     if(!snapshots_ready){
@@ -1858,9 +1872,14 @@ static lv_area_t animated_area(int which){
     }
 }
 static void invalidate_frame(void){
-    if(moving || full_dirty || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME ||
-       chart_rise_age<UI_CHART_BLEND_TIME || underline_age<UI_UNDERLINE_TIME){
+    /* The Particles selection blend (card fill and chart) stays below the field. */
+    bool pm_lower=scene==2 && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME);
+    if(moving || full_dirty || (!pm_lower && (pm_blend_age<UI_PM_TRANSITION_TIME ||
+       underline_age<UI_UNDERLINE_TIME)) || chart_blend_age<UI_CHART_BLEND_TIME || chart_rise_age<UI_CHART_BLEND_TIME){
         lv_obj_invalidate(surface);full_dirty=false;
+    }else if(pm_lower){
+        lv_area_t a=pm_lower_area();lv_obj_invalidate_area(surface,&a);
+        if((int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick){a=animated_area(2);lv_obj_invalidate_area(surface,&a);}
     }else if(scene!=2 || (int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick){
         lv_area_t a=animated_area(scene);lv_obj_invalidate_area(surface,&a);
     }

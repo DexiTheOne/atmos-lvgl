@@ -443,6 +443,7 @@ int main(int argc,char **argv){
             for(int screen=0;screen<ATMOS_SCENES;screen++){
                 atmos_set_scene(atmos_page(screen));
                 for(int i=0;i<72;i++){
+                    if(i==30)atmos_cycle_pm(1); /* Particles: the card fill's partial redraws */
                     advance();
                     if(verify_frame()){fprintf(stderr,"Invalid palette or empty frame\n");return 10;}
                     /* The presented frame must be exactly the composed 1-bit transition. */
