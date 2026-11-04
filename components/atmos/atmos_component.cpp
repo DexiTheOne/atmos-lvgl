@@ -325,7 +325,8 @@ void AtmosComponent::on_display_event_(lv_event_code_t code) {
    until the next frame is due, so Wi-Fi, the API and sensors get the CPU between frames
    and a frame never starts earlier than its period (the frame-rate cap). */
 void AtmosComponent::frame_() {
-  uint32_t now = micros();
+  uint32_t now = micros(), step_us = 0, refr_us = 0;
+  int pre = -1;
   // Fixed-cadence model steps: one step per frame period. A step that is a full period
   // late means a frame slot was missed; the model then advances by the real elapsed time.
   if ((int32_t) (now - this->next_step_us_) >= 0) {
@@ -341,16 +342,29 @@ void AtmosComponent::frame_() {
 #endif
     uint32_t step_start = micros();
     atmos_step(steps * this->period_us_ / 1e6);
-    int pre = atmos_step_prerendered();
+    step_us = micros() - step_start;
+    pre = atmos_step_prerendered();
     if (pre >= 0) {
       this->pre_cost_[pre] += micros() - step_start;
       this->pre_n_[pre]++;
     }
     this->next_step_us_ += steps * this->period_us_;
+    uint32_t refr_start = micros();
     lv_refr_now(this->disp_);  // render now, not on LVGL's own refresh timer
+    refr_us = micros() - refr_start;
   }
+  uint32_t timer_start = micros();
   lv_timer_handler();
+  uint32_t timer_us = micros() - timer_start, publish_start = micros();
   this->publish_selection_();
+  uint32_t publish_us = micros() - publish_start;
+  // Stall finder: where a slow frame's time went (model step incl. pre-render, LVGL
+  // refresh = render + convert + push, LVGL timers, select publish).
+  if (this->frame_stats_ && micros() - now > 150000)
+    ESP_LOGW(TAG, "slow frame %.0f ms: step %.0f (pre-render %d) refresh %.0f (render %.0f convert %.0f push %.0f) timers %.0f publish %.0f | scene %d moving %d",
+             (micros() - now) / 1000.0f, step_us / 1000.0f, pre, refr_us / 1000.0f, this->render_us_ / 1000.0f,
+             this->convert_us_ / 1000.0f, this->push_us_ / 1000.0f, timer_us / 1000.0f, publish_us / 1000.0f,
+             atmos_scene(), (int) atmos_is_moving());
   bool moving = atmos_is_moving();
   if (this->frame_stats_ && this->was_moving_ && !moving) {
     this->transition_index_++;
