@@ -2142,6 +2142,14 @@ void atmos_set_scenario(int value){
     if(value<0 || value>=(int)(sizeof profiles/sizeof profiles[0]))return;
     scenario=value;origin=sensor;target=profiles[value];changed=t;external_data=false;
 }
+/* Debug: model state while a selection animation runs, else empty. */
+const char *atmos_debug_state(void){
+    static char text[160];
+    if(underline_age>=UI_UNDERLINE_TIME && pm_blend_age>=UI_PM_TRANSITION_TIME && !moving)return "";
+    snprintf(text,sizeof text,"t %.2f scene %d moving %d mv %.2f sel %d from %d ul %.2f pm %.2f age %.2f pend %d q %d",
+        t,scene,moving,movement,pm_selected,underline_from,underline_age,pm_blend_age,age,pending_advance,queued);
+    return text;
+}
 void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;}
 void atmos_set_wifi(int bars){
     bars=bars<0?-1:bars>3?3:bars;

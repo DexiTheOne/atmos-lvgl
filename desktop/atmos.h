@@ -32,6 +32,7 @@ void atmos_toggle_auto(void);
 void atmos_set_hidden(bool hidden);
 /* Hardware integration: pass measured readings and disable the demo generator. */
 void atmos_set_readings(atmos_readings readings);
+const char *atmos_debug_state(void); /* debug: model state during selection animations */
 /* Wi-Fi strength shown in every page's badge: 0-3 lit arcs, or -1 (the default) for
    disconnected, drawn as an X. atmos_wifi_bars() maps an RSSI in dBm (NAN when
    disconnected) to bars: -60, -70 and -80 dBm are the 3/2/1 thresholds. */
