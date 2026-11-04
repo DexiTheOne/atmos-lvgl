@@ -126,8 +126,6 @@ void AtmosComponent::advance(int direction) {
   this->key_pressed_ = true;
   this->last_key_ms_ = now;
   int before = atmos_reading();
-  if (this->frame_stats_)
-    ESP_LOGI(TAG, "key %+d", direction);
   atmos_advance(direction);
   // During a transition the press waits for the arriving page; adopt the reading it moves to.
   this->adopt_ = true;
@@ -360,11 +358,6 @@ void AtmosComponent::frame_() {
   uint32_t timer_us = micros() - timer_start, publish_start = micros();
   this->publish_selection_();
   uint32_t publish_us = micros() - publish_start;
-  if (this->frame_stats_) {
-    const char *state = atmos_debug_state();
-    if (*state)
-      ESP_LOGI(TAG, "state %s", state);
-  }
   // Stall finder: where a slow frame's time went (model step incl. pre-render, LVGL
   // refresh = render + convert + push, LVGL timers, select publish).
   if (this->frame_stats_ && micros() - now > 150000)

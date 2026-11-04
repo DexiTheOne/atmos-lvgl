@@ -1876,9 +1876,8 @@ static lv_area_t animated_area(int which){
     }
 }
 static void invalidate_frame(void){
-    /* The Particles selection blend (card fill and chart) stays below the field.
-       A/B TEST: disabled (full redraws) to check the device stall. */
-    bool pm_lower=false && scene==2 && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME);
+    /* The Particles selection blend (card fill and chart) stays below the field. */
+    bool pm_lower=scene==2 && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME);
     if(moving || full_dirty || (!pm_lower && (pm_blend_age<UI_PM_TRANSITION_TIME ||
        underline_age<UI_UNDERLINE_TIME)) || chart_blend_age<UI_CHART_BLEND_TIME || chart_rise_age<UI_CHART_BLEND_TIME){
         lv_obj_invalidate(surface);full_dirty=false;
@@ -2075,9 +2074,15 @@ void atmos_step(double dt){
     if(paused || hidden || dt<=0)return;
     /* Limit catch-up after suspension; normal operation advances at active time. */
     dt=fmin(dt,.1f);t+=dt;prerendered_last_step=-1;
+    /* Blends redraw only while running, so the frame where one ends must redraw too,
+       or its last step (the card's final corner, the chart's end) stays on screen. */
+    bool blending=pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME ||
+        chart_rise_age<UI_CHART_BLEND_TIME || underline_age<UI_UNDERLINE_TIME;
     pm_blend_age=fmin(UI_PM_TRANSITION_TIME,pm_blend_age+dt);chart_blend_age=fminf(UI_CHART_BLEND_TIME,chart_blend_age+(float)dt);
     chart_rise_age=fminf(UI_CHART_BLEND_TIME,chart_rise_age+(float)dt);
     underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)dt);
+    if(blending && pm_blend_age>=UI_PM_TRANSITION_TIME && chart_blend_age>=UI_CHART_BLEND_TIME &&
+       chart_rise_age>=UI_CHART_BLEND_TIME && underline_age>=UI_UNDERLINE_TIME)full_dirty=true;
     float concentration=isfinite(sensor.pm10)?clamp(sensor.pm10,0,UI_PM_DENSITY_LIMIT):0;
     float density_target=UI_PM_DENSITY_MIN+(UI_PM_PARTICLE_MAX-UI_PM_DENSITY_MIN)*
         concentration/(concentration+UI_PM_DENSITY_HALF);
@@ -2142,14 +2147,6 @@ void atmos_navigate(int direction){atmos_set_scene(cycle_next(queued>=0?queued:m
 void atmos_set_scenario(int value){
     if(value<0 || value>=(int)(sizeof profiles/sizeof profiles[0]))return;
     scenario=value;origin=sensor;target=profiles[value];changed=t;external_data=false;
-}
-/* Debug: model state while a selection animation runs, else empty. */
-const char *atmos_debug_state(void){
-    static char text[160];
-    if(underline_age>=UI_UNDERLINE_TIME && pm_blend_age>=UI_PM_TRANSITION_TIME && !moving)return "";
-    snprintf(text,sizeof text,"t %.2f scene %d moving %d mv %.2f sel %d from %d ul %.2f pm %.2f age %.2f pend %d q %d",
-        t,scene,moving,movement,pm_selected,underline_from,underline_age,pm_blend_age,age,pending_advance,queued);
-    return text;
 }
 void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;}
 void atmos_set_wifi(int bars){
