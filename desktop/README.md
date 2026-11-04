@@ -25,6 +25,7 @@ Windows presentation composes the frame and letterboxing in an offscreen bitmap 
 | `,` and `.` | The device's left/right keys: previous/next underlined reading, then previous/next page (`atmos_advance()`) |
 | Space | Pause motion and history sampling |
 | A | Toggle automatic cycling |
+| P | Toggle alert focus: cycle only readings whose band alerts |
 | F1Ã¢â‚¬â€œF5 | Quiet morning, occupied room, cooking, open windows, sensor full scale |
 | S | Save native-resolution `atmos-frame.bmp` in the working directory |
 | R | Reboot the device: the UI is torn down and the boot splash shows again |
@@ -98,4 +99,4 @@ Both scenes are still snapshots during the transition.
 
 The full visual standardization is documented in [UI design system](../docs/UI_DESIGN_SYSTEM.md). All headers use the same title, badge and divider geometry; all charts share one renderer. The native six-state comparison is `../artifacts/redesign-after.png`.
 
-Header badges show a rating of the page's selected measurement: Good, Fair or Poor (`--` when the reading is missing). The overview badge shows the worst rating across all measurements, and its warning symbol appears when that is Poor. The limits in `ui_theme.h` (`UI_CO2_FAIR`, `UI_PM25_POOR`, ...) are placeholder defaults; `atmos_set_bands()` replaces a reading's bands with any ranges, texts and severity levels (the device's `ratings:` YAML).
+Header badges show a rating of the page's selected measurement: Good, Fair or Poor (`--` when the reading is missing). The overview badge shows the worst rating across all measurements, and its warning symbol appears when any reading's band has `alert` set (by default, Poor). With alert focus on (`atmos_set_alert_focus()`, key P), automatic cycling visits only alerting readings until they clear, each page keeping its full hold. The limits in `ui_theme.h` (`UI_CO2_FAIR`, `UI_PM25_POOR`, ...) are placeholder defaults; `atmos_set_bands()` replaces a reading's bands with any ranges, texts and severity levels (the device's `ratings:` YAML).

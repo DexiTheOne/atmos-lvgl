@@ -151,6 +151,7 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key==VK_TAB || key==VK_OEM_6)atmos_cycle_pm(1);
         else if(key==VK_OEM_4)atmos_cycle_pm(-1);
         else if(key=='A')atmos_toggle_auto();
+        else if(key=='P')atmos_set_alert_focus(!atmos_alert_focus());
         else if(key=='W')atmos_set_wifi(atmos_wifi()<=-1?3:atmos_wifi()-1); /* 3, 2, 1, 0, off */
         else if(key=='H'){hw_pace=!hw_pace;update_title();}
         else if(key=='S')save_bmp("atmos-frame.bmp");

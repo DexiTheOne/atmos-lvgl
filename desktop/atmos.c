@@ -65,7 +65,10 @@ static int pre_from=-1,pre_to=-1,pre_stage;
 static double pre_start;
 static unsigned pre_version,prerendered_transitions;
 static int prerendered_last_step=-1; /* scene rasterised by the latest atmos_step(), or -1 */
-static bool paused, automatic=true, hidden, external_data, moving;
+static bool paused, automatic=true, hidden, external_data, moving, alert_focus;
+/* Items automatic cycling steps through during this hold, fixed when the hold starts
+   so a reading that clears mid-hold still gets its time. 0 means every item. */
+static unsigned hold_items;
 /* The first transition after a splash opens from it onto the first page. */
 static bool intro;
 static int pm_selected=1,pm_snapshot_count;
@@ -128,7 +131,8 @@ static float mix(float a,float b,float p){return a+(b-a)*p;}
    ui_theme.h and are placeholders; the device may replace them (atmos_set_bands()).
    Missing readings have no rating. */
 #define OPEN NAN
-#define BAND(lo,hi,level,text) {lo,hi,level,text}
+/* Poor (level 2 and above) alerts by default. */
+#define BAND(lo,hi,level,text) {lo,hi,level,text,(level)>=2}
 #define UPPER(fair,poor) {BAND(OPEN,fair,0,"Good"),BAND(fair,poor,1,"Fair"),BAND(poor,OPEN,2,"Poor")},3
 #define RANGE(glo,ghi,flo,fhi) {BAND(glo,ghi,0,"Good"),BAND(flo,fhi,1,"Fair"),BAND(OPEN,OPEN,2,"Poor")},3
 static struct { atmos_band band[ATMOS_BANDS_MAX]; int n; } bands[ATMOS_READINGS]={
@@ -182,7 +186,8 @@ static rating rate_overall(void){
     for(int i=0;i<ATMOS_READINGS;i++){rating r=rate(i);if(r && (!worst || r->level>worst->level))worst=r;}
     return worst;
 }
-static bool warning(void){rating r=rate_overall();return r && r->level>=2;}
+static bool alerting(int r){rating b=rate(r);return b && b->alert;}
+static bool warning(void){for(int i=0;i<ATMOS_READINGS;i++)if(alerting(i))return true;return false;}
 static lv_color_t color(bool reverse){return lv_color_hex(reverse?UI_COLOR_PAPER:UI_COLOR_INK);}
 
 /* Direct fills whose clip area extended past the layer buffer (diagnostic). */
@@ -2007,7 +2012,7 @@ void atmos_init(void){
     axis_label_canvas=lv_canvas_create(lv_screen_active());
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
-    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=CYCLE_FIRST;queued=-1;pending_advance=0;
+    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=CYCLE_FIRST;queued=-1;pending_advance=0;hold_items=0;
     pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=chart_rise_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;underline_age=UI_UNDERLINE_TIME;underline_from=-1;underline_from_end=1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
     gas_intensity[0]=gas_level(0);gas_intensity[1]=gas_level(1);
     for(int j=0;j<UI_HCHO_MOLECULES;j++)hcho_grow[j]=j<hcho_target()?1:0;
@@ -2051,6 +2056,36 @@ static int cycle_next(int from,int direction){
     int n=ATMOS_SCENES-CYCLE_FIRST,i=p<CYCLE_FIRST?(direction>0?-1:0):p-CYCLE_FIRST;
     return page_order[CYCLE_FIRST+((i+direction)%n+n)%n];
 }
+/* Each reading's page and its position there (the underline/chart selection). */
+static const int8_t reading_scene[ATMOS_READINGS]={1,3,3,5,2,2,2,2,4,4,4};
+static const int8_t reading_item[ATMOS_READINGS]={0,0,1,0,0,1,2,3,0,1,2};
+/* Alert focus: the items of page s whose readings alert, as a bit mask. */
+static unsigned alert_mask(int s){
+    unsigned m=0;
+    for(int r=0;r<ATMOS_READINGS;r++)if(reading_scene[r]==s && alerting(r))m|=1u<<reading_item[r];
+    return m;
+}
+static bool focus_active(void){
+    if(!alert_focus)return false;
+    for(int p=CYCLE_FIRST;p<ATMOS_SCENES;p++)if(alert_mask(page_order[p]))return true;
+    return false;
+}
+static unsigned page_items(int s){
+    unsigned m=focus_active()?alert_mask(s):0;
+    return m?m:(1u<<auto_items(s))-1;
+}
+static int lowest_item(unsigned m){int i=0;while(m && !(m&1u<<i))i++;return i;}
+/* The page automatic cycling moves to next: with alerts, the next alerting page
+   (the current one when it alone alerts), else the next page. */
+static int auto_next(int from){
+    if(!focus_active())return cycle_next(from,1);
+    int to=from;
+    do to=cycle_next(to,1);while(to!=from && !alert_mask(to));
+    return to;
+}
+/* Set the next page to the reading it arrives on, before its snapshot is pre-rendered. */
+static void prepare_next(int to){if(to!=scene)auto_select(to,lowest_item(page_items(to)));}
+static void start_hold(void){age=0;hold_items=page_items(scene);}
 static float transition_duration(int from,int to){
     (void)to;
     static const float seconds[ATMOS_SCENES]={1.4f,1.4f,1.5f,1.3f,1.6f,1.4f};
@@ -2060,7 +2095,9 @@ static void prerender_step(void){
     if(!automatic || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME ||
        chart_rise_age<UI_CHART_BLEND_TIME || underline_age<UI_UNDERLINE_TIME){pre_stage=0;return;}
     double start=t+(hold-age);
-    int to=cycle_next(scene,1);
+    int to=auto_next(scene);
+    if(to==scene){pre_stage=0;return;}
+    prepare_next(to);
     if(pre_from!=scene || pre_to!=to || pre_version!=data_version || fabs(pre_start-start)>1e-4){
         pre_stage=0;pre_from=scene;pre_to=to;pre_version=data_version;pre_start=start;
     }
@@ -2096,19 +2133,29 @@ void atmos_step(double dt){
     if(moving){
         movement+=dt;
         if(movement>=duration){
-            scene=destination;moving=intro=false;age=0;full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;underline_age=UI_UNDERLINE_TIME;
+            scene=destination;moving=intro=false;start_hold();full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;underline_age=UI_UNDERLINE_TIME;
             /* Reset the next page now, before its snapshot is pre-rendered, so
                automatic cycling arrives on its first reading. */
-            if(automatic){int next=cycle_next(scene,1);if(next!=scene)auto_select(next,0);}
+            if(automatic)prepare_next(auto_next(scene));
             if(queued>=0){int requested=queued;queued=-1;atmos_set_scene(requested);}
             /* Key presses made during the transition now step the arrived page. */
             else while(pending_advance && !moving){int d=pending_advance>0?1:-1;pending_advance-=d;atmos_advance(d);}}
     }else{age+=dt;
         if(automatic){
-            int n=auto_items(scene),item=LV_MIN(n-1,(int)(age*n/hold));
+            /* Split the hold evenly between this hold's items, stepping forward only. */
+            unsigned m=hold_items?hold_items:page_items(scene);
+            int n=0;for(unsigned b=m;b;b&=b-1)n++;
+            int slot=LV_MIN(n-1,(int)(age*n/hold)),item=-1;
+            for(int i=0;i<=slot;i++){item++;while(!(m&1u<<item))item++;}
             if(item>auto_selected(scene))auto_select(scene,item);
         }
-        prerender_step();if(automatic && age>=hold)atmos_navigate(1);}
+        prerender_step();
+        if(automatic && age>=hold){
+            int to=auto_next(scene);
+            /* A page that alone alerts starts another hold on its first alerting reading. */
+            if(to==scene){start_hold();auto_select(scene,lowest_item(hold_items));}
+            else{prepare_next(to);atmos_set_scene(to);}
+        }}
     invalidate_frame();
 }
 void atmos_set_scene(int requested){
@@ -2159,6 +2206,9 @@ int atmos_wifi_bars(float dbm){return isnan(dbm)?-1:dbm>=-60.0f?3:dbm>=-70.0f?2:
 void atmos_toggle_pause(void){paused=!paused;}
 void atmos_toggle_auto(void){automatic=!automatic;}
 void atmos_set_auto(bool on){automatic=on;}
+void atmos_set_alert_focus(bool on){alert_focus=on;}
+bool atmos_alert_focus(void){return alert_focus;}
+bool atmos_alert_active(void){return warning();}
 bool atmos_auto(void){return automatic;}
 void atmos_set_hold(float seconds){if(!isnan(seconds))hold=clamp(seconds,ATMOS_HOLD_MIN,ATMOS_HOLD_MAX);}
 float atmos_hold(void){return hold;}
@@ -2171,9 +2221,6 @@ void atmos_set_history_window(float seconds){
     full_dirty=true;data_version++;if(surface)lv_obj_invalidate(surface);
 }
 float atmos_history_window(void){return history_window;}
-/* Each reading's page and its position there (the underline/chart selection). */
-static const int8_t reading_scene[ATMOS_READINGS]={1,3,3,5,2,2,2,2,4,4,4};
-static const int8_t reading_item[ATMOS_READINGS]={0,0,1,0,0,1,2,3,0,1,2};
 void atmos_select_reading(int r){
     if(r<0 || r>=ATMOS_READINGS)return;
     int s=reading_scene[r];
@@ -2286,7 +2333,7 @@ int atmos_self_test(void){
         atmos_set_history_window(120);
         for(int i=0;i<1300;i++)atmos_step(.1f);
         if(count<60 || count>62)return 33;
-        atmos_band custom[2]={{NAN,500,0,"Fine"},{500,NAN,3,"Terrible"}};
+        atmos_band custom[2]={{NAN,500,0,"Fine",false},{500,NAN,3,"Terrible",true}};
         atmos_band saved[ATMOS_BANDS_MAX];int saved_n=bands[ATMOS_CO2].n;memcpy(saved,bands[ATMOS_CO2].band,sizeof saved);
         if(!atmos_set_bands(ATMOS_CO2,custom,2) || atmos_set_bands(ATMOS_CO2,custom,ATMOS_BANDS_MAX+1))return 34;
         if(strcmp(rating_text(rate_co2()),sensor.co2<500?"Fine":"Terrible"))return 35;
@@ -2302,6 +2349,60 @@ int atmos_self_test(void){
         if(count<5)return 36;
         atmos_set_history_window(120);memcpy(history,saved,sizeof saved);count=kept;next_sample=next;
     }
+    {
+        /* Alert focus: automatic cycling visits only alerting readings, holding each
+           page for the hold, and returns to them after a manual visit. */
+        atmos_readings saved_sensor=sensor;bool saved_external=external_data;
+        atmos_readings calm={410,5,50,1,22,45,3,6,10,1013.2f,10},v;
+        automatic=true;alert_focus=true;
+        #define SETTLE() do{for(int i=0;i<400 && moving;i++)atmos_step(.025f);}while(0)
+        #define HOLD_END() do{for(int i=0;i<400 && !moving && age+.025f<hold;i++)atmos_step(.025f);}while(0)
+        /* CO2 alone: a manual visit elsewhere returns to it, then it holds. */
+        v=calm;v.co2=1500;atmos_set_readings(v);
+        if(!atmos_alert_active() || alert_mask(1)!=1 || alert_mask(3))return 40;
+        atmos_set_scene(4);SETTLE();if(scene!=4)return 41;
+        HOLD_END();atmos_step(.05f);SETTLE();if(scene!=1)return 42;
+        for(int i=0;i<3;i++){HOLD_END();atmos_step(.05f);if(moving || scene!=1)return 43;}
+        /* Two alerts on one page: the underline steps between them, no transition. */
+        v=calm;v.voc=300;v.nox=200;atmos_set_readings(v);
+        HOLD_END();atmos_step(.05f);SETTLE();if(scene!=3 || gas_selected!=0)return 44;
+        for(int i=0;i<4;i++){
+            for(int j=0;j<(int)(hold/.025f*.5f)+2;j++)atmos_step(.025f);
+            if(moving || scene!=3 || gas_selected!=1)return 45;
+            HOLD_END();atmos_step(.05f);
+            if(moving || scene!=3 || gas_selected!=0)return 46;
+        }
+        /* Alerts on two pages alternate, arriving on the alerting reading with the
+           hold-time snapshots. */
+        v=calm;v.co2=1500;v.pm10=200;atmos_set_readings(v);
+        for(int i=0;i<4;i++){
+            unsigned before=prerendered_transitions;
+            HOLD_END();atmos_step(.05f);
+            if(!moving || prerendered_transitions!=before+1)return 47;
+            int expect=i==0?auto_next(scene):scene==1?2:1;SETTLE();
+            if(scene!=expect || (scene==2 && pm_selected!=3))return 48;
+        }
+        /* A reading that clears mid-hold keeps its page for the full hold. */
+        while(scene!=1){HOLD_END();atmos_step(.05f);SETTLE();}
+        v=calm;v.co2=1500;atmos_set_readings(v);
+        for(int i=0;i<40;i++)atmos_step(.025f);
+        atmos_set_readings(calm);
+        for(int i=0;i<400 && age+.1f<hold;i++)atmos_step(.025f);
+        if(moving || scene!=1)return 49;
+        HOLD_END();atmos_step(.05f);SETTLE();if(scene!=cycle_next(1,1))return 50;
+        /* A Fair band flagged alert raises the alert and the overview warning. */
+        atmos_band fair[2]={{NAN,800,0,"Good",false},{800,NAN,1,"Fair",true}};
+        atmos_band saved[ATMOS_BANDS_MAX];int saved_n=bands[ATMOS_CO2].n;memcpy(saved,bands[ATMOS_CO2].band,sizeof saved);
+        atmos_set_bands(ATMOS_CO2,fair,2);
+        v=calm;v.co2=900;atmos_set_readings(v);
+        if(!warning() || alert_mask(1)!=1)return 51;
+        atmos_set_bands(ATMOS_CO2,saved,saved_n);
+        if(warning())return 52;
+        #undef SETTLE
+        #undef HOLD_END
+        alert_focus=automatic=false;sensor=saved_sensor;external_data=saved_external;full_dirty=true;data_version++;
+    }
+    puts("Alert focus: single page, in-page stepping, two-page alternation, return after a manual visit, full hold on clearing and alert-flagged bands passed.");
     puts("Controls: reading selection, hold bound, history span shrink/grow, fast fill of long spans and rating bands passed.");
     puts("Prerender: hold-time transition snapshots match fresh renders and are used.");
     puts("PM: independent history channels, rapid selection, fixed transition window and missing-sample gaps passed.");

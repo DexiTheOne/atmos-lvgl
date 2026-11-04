@@ -52,6 +52,14 @@ void atmos_select_reading(int reading);
 int atmos_reading(void);
 void atmos_set_auto(bool on);
 bool atmos_auto(void);
+/* Alert focus: while any reading's band has alert set, automatic cycling visits only
+   alerting readings (in page order, stepping the underline within a page), holding
+   each page for the hold time. With none alerting it cycles normally. Manual
+   navigation is unaffected; cycling returns to the alerts after one hold. */
+void atmos_set_alert_focus(bool on);
+bool atmos_alert_focus(void);
+/* True while any reading's band has alert set. */
+bool atmos_alert_active(void);
 /* Seconds each page (split between its readings) is held before automatic cycling moves on. */
 #define ATMOS_HOLD_MIN 2.0f
 #define ATMOS_HOLD_MAX 600.0f
@@ -65,11 +73,12 @@ void atmos_set_history_window(float seconds);
 float atmos_history_window(void);
 /* Rating bands: a reading inside [min, max] shows `text` in its page's badge. NAN
    leaves that end open; the first matching band wins. level orders severity for
-   the overview (worst wins) and its warning (level >= 2). Readings with no
-   matching band show "--". May be called before atmos_init(). */
+   the overview (worst wins). alert marks bands
+   that raise the overview's warning and, with alert focus on, the alert cycle.
+   Readings with no matching band show "--". May be called before atmos_init(). */
 #define ATMOS_BANDS_MAX 8
 #define ATMOS_BAND_TEXT 16
-typedef struct { float min, max; int level; char text[ATMOS_BAND_TEXT]; } atmos_band;
+typedef struct { float min, max; int level; char text[ATMOS_BAND_TEXT]; bool alert; } atmos_band;
 /* Returns false (and changes nothing) for a bad reading or more than ATMOS_BANDS_MAX bands. */
 bool atmos_set_bands(int reading, const atmos_band *bands, int n);
 int atmos_self_test(void);

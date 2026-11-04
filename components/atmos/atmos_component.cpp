@@ -188,7 +188,7 @@ void AtmosComponent::publish_selection_() {
 void AtmosComponent::set_hold(float seconds) { atmos_set_hold(seconds); }
 void AtmosComponent::set_history_window(float seconds) { atmos_set_history_window(seconds); }
 
-void AtmosComponent::add_band(int reading, float min, float max, int level, const char *text) {
+void AtmosComponent::add_band(int reading, float min, float max, int level, const char *text, bool alert) {
   static atmos_band bands[ATMOS_READINGS][ATMOS_BANDS_MAX];
   static int counts[ATMOS_READINGS];
   if (reading < 0 || reading >= ATMOS_READINGS || counts[reading] >= ATMOS_BANDS_MAX)
@@ -197,6 +197,7 @@ void AtmosComponent::add_band(int reading, float min, float max, int level, cons
   b.min = min;
   b.max = max;
   b.level = level;
+  b.alert = alert;
   snprintf(b.text, sizeof b.text, "%s", text);
   atmos_set_bands(reading, bands[reading], counts[reading]);
 }
@@ -239,6 +240,16 @@ void AtmosAutoSwitch::setup() {
 
 void AtmosAutoSwitch::write_state(bool state) {
   this->parent_->set_auto(state);
+  this->publish_state(state);
+}
+
+void AtmosAlertSwitch::setup() {
+  optional<bool> initial = this->get_initial_state_with_restore_mode();
+  this->write_state(initial.has_value() && *initial);
+}
+
+void AtmosAlertSwitch::write_state(bool state) {
+  atmos_set_alert_focus(state);
   this->publish_state(state);
 }
 
@@ -357,6 +368,8 @@ void AtmosComponent::frame_() {
   lv_timer_handler();
   uint32_t timer_us = micros() - timer_start, publish_start = micros();
   this->publish_selection_();
+  if (this->alert_sensor_ != nullptr && this->started_)
+    this->alert_sensor_->publish_state(atmos_alert_active());  // publishes only on change
   uint32_t publish_us = micros() - publish_start;
   // Stall finder: where a slow frame's time went (model step incl. pre-render, LVGL
   // refresh = render + convert + push, LVGL timers, select publish).

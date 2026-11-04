@@ -4,6 +4,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
 #include "esphome/components/st7305_rlcd/st7305_rlcd.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/number/number.h"
 #include "esphome/components/select/select.h"
 #include "esphome/components/sensor/sensor.h"
@@ -51,13 +52,14 @@ class AtmosComponent : public Component {
   // Home Assistant controls. Settings made before the UI starts are applied when it does.
   void set_reading_select(AtmosReadingSelect *s) { this->reading_select_ = s; }
   void set_auto_switch(AtmosAutoSwitch *s) { this->auto_switch_ = s; }
+  void set_alert_sensor(binary_sensor::BinarySensor *s) { this->alert_sensor_ = s; }
   /* Select option: 0 "Auto advance" (turns cycling on), else reading option - 1. */
   void select_option(int option);
   void set_auto(bool on);
   void set_hold(float seconds);
   void set_history_window(float seconds);
   /* Rating band for a reading (atmos_band); bands for a reading are applied in order. */
-  void add_band(int reading, float min, float max, int level, const char *text);
+  void add_band(int reading, float min, float max, int level, const char *text, bool alert);
   /* Link a sensor to a reading (ATMOS_CO2 ...). Linking any replaces the demo data. */
   void set_sensor(int reading, sensor::Sensor *s);
 
@@ -107,6 +109,7 @@ class AtmosComponent : public Component {
 
   AtmosReadingSelect *reading_select_{nullptr};
   AtmosAutoSwitch *auto_switch_{nullptr};
+  binary_sensor::BinarySensor *alert_sensor_{nullptr};
   int pending_reading_{-1}, published_option_{-1};
   // While cycling, the select shows a reading only while the reading chosen by the
   // select or a key (manual_) is on screen, otherwise "Auto advance", so cycling
@@ -129,6 +132,17 @@ class AtmosReadingSelect : public select::Select, public Parented<AtmosComponent
 };
 
 class AtmosAutoSwitch : public switch_::Switch, public Component, public Parented<AtmosComponent> {
+ public:
+  void setup() override;
+  float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }
+
+ protected:
+  void write_state(bool state) override;
+};
+
+/* Alert focus: while any reading alerts, automatic cycling shows only alerting readings.
+   A model setting atmos_init() keeps, so it applies before the UI starts. */
+class AtmosAlertSwitch : public switch_::Switch, public Component {
  public:
   void setup() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }

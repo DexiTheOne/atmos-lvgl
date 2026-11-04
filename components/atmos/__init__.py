@@ -10,7 +10,7 @@ from pathlib import Path
 
 from esphome import automation
 import esphome.codegen as cg
-from esphome.components import number, select, sensor, switch
+from esphome.components import binary_sensor, number, select, sensor, switch
 from esphome.components.esp32 import add_idf_component, add_idf_sdkconfig_option
 import esphome.config_validation as cv
 from esphome.const import (
@@ -28,7 +28,7 @@ from esphome.core import CORE
 from esphome.helpers import copy_file_if_changed
 
 DEPENDENCIES = ["display"]
-AUTO_LOAD = ["number", "select", "sensor", "switch"]
+AUTO_LOAD = ["binary_sensor", "number", "select", "sensor", "switch"]
 
 CONF_DISPLAY_ID = "display_id"
 CONF_FRAME_PERIOD = "frame_period"
@@ -41,6 +41,9 @@ CONF_SPLASH_TIMEOUT = "splash_timeout"
 CONF_READING_SELECT = "reading_select"
 CONF_AUTO_ADVANCE = "auto_advance"
 CONF_HOLD_TIME = "hold_time"
+CONF_ALERT = "alert"
+CONF_ALERT_FOCUS = "alert_focus"
+CONF_ALERT_ACTIVE = "alert_active"
 CONF_HISTORY_TIME = "history_time"
 CONF_RATINGS = "ratings"
 CONF_SENSORS = "sensors"
@@ -77,6 +80,7 @@ AtmosComponent = atmos_ns.class_("AtmosComponent", cg.Component)
 AdvanceAction = atmos_ns.class_("AdvanceAction", automation.Action)
 AtmosReadingSelect = atmos_ns.class_("AtmosReadingSelect", select.Select)
 AtmosAutoSwitch = atmos_ns.class_("AtmosAutoSwitch", switch.Switch, cg.Component)
+AtmosAlertSwitch = atmos_ns.class_("AtmosAlertSwitch", switch.Switch, cg.Component)
 AtmosNumber = atmos_ns.class_("AtmosNumber", number.Number, cg.Component)
 ST7305RLCD = cg.esphome_ns.namespace("st7305_rlcd").class_("ST7305RLCD")
 
@@ -118,6 +122,7 @@ def _validate_bands(bands):
         raise cv.Invalid(f"at most {BANDS_MAX} bands per reading")
     for i, band in enumerate(bands):
         band.setdefault(CONF_LEVEL, i)
+        band.setdefault(CONF_ALERT, band[CONF_LEVEL] >= 2)
         if CONF_MIN_VALUE in band and CONF_MAX_VALUE in band and band[CONF_MIN_VALUE] >= band[CONF_MAX_VALUE]:
             raise cv.Invalid("min must be below max")
     return bands
@@ -125,7 +130,9 @@ def _validate_bands(bands):
 
 # A band: the badge text for readings in [min, max) (either end may be left open).
 # The first matching band wins. level orders severity for the overview, which shows the
-# worst; level 2 or more raises its warning. level defaults to the band's position.
+# worst; level defaults to the band's position. alert (default: level 2 or more) raises
+# the overview's warning and the Alert active sensor, and with alert focus on,
+# automatic cycling shows only alerting readings.
 BAND_SCHEMA = cv.All(
     _band_keys,
     cv.Schema(
@@ -134,6 +141,7 @@ BAND_SCHEMA = cv.All(
             cv.Optional(CONF_MAX_VALUE): cv.float_,
             cv.Required(CONF_TEXT): cv.All(cv.string_strict, cv.Length(min=1, max=BAND_TEXT_MAX)),
             cv.Optional(CONF_LEVEL): cv.int_range(min=0, max=100),
+            cv.Optional(CONF_ALERT): cv.boolean,
         }
     ),
 )
@@ -168,6 +176,15 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_CONFIG,
             icon="mdi:autorenew",
         ).extend(cv.COMPONENT_SCHEMA),
+        # While any reading's band alerts, automatic cycling shows only alerting readings.
+        cv.Optional(CONF_ALERT_FOCUS): switch.switch_schema(
+            AtmosAlertSwitch,
+            default_restore_mode="RESTORE_DEFAULT_OFF",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon="mdi:alert-circle-outline",
+        ).extend(cv.COMPONENT_SCHEMA),
+        # On while any reading's band has alert set.
+        cv.Optional(CONF_ALERT_ACTIVE): binary_sensor.binary_sensor_schema(device_class="problem"),
         # Seconds each page is held before automatic cycling moves on.
         cv.Optional(CONF_HOLD_TIME): _number_schema(UNIT_SECOND, HOLD_LIMITS, 60.0, 6.5),
         # Minutes of history the charts show.
@@ -216,7 +233,7 @@ async def to_code(config):
     for index, (key, _) in enumerate(READINGS):
         for band in config[CONF_RATINGS].get(key, []):
             lo, hi = band.get(CONF_MIN_VALUE), band.get(CONF_MAX_VALUE)
-            cg.add(var.add_band(index, nan if lo is None else lo, nan if hi is None else hi, band[CONF_LEVEL], band[CONF_TEXT]))
+            cg.add(var.add_band(index, nan if lo is None else lo, nan if hi is None else hi, band[CONF_LEVEL], band[CONF_TEXT], band[CONF_ALERT]))
     if conf := config.get(CONF_READING_SELECT):
         sel = await select.new_select(conf, options=["Auto advance"] + [name for _, name in READINGS])
         await cg.register_parented(sel, var)
@@ -226,6 +243,12 @@ async def to_code(config):
         await cg.register_component(sw, conf)
         await cg.register_parented(sw, var)
         cg.add(var.set_auto_switch(sw))
+    if conf := config.get(CONF_ALERT_FOCUS):
+        sw = await switch.new_switch(conf)
+        await cg.register_component(sw, conf)
+        await cg.register_parented(sw, var)
+    if conf := config.get(CONF_ALERT_ACTIVE):
+        cg.add(var.set_alert_sensor(await binary_sensor.new_binary_sensor(conf)))
     for key, history, scale, step in ((CONF_HOLD_TIME, False, 1.0, 0.5), (CONF_HISTORY_TIME, True, 60.0, 1.0)):
         if conf := config.get(key):
             num = await number.new_number(conf, min_value=conf[CONF_MIN_VALUE], max_value=conf[CONF_MAX_VALUE], step=step)
