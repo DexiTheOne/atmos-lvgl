@@ -259,8 +259,6 @@
 #define UI_GAS_UNDERLINE_GAP 4
 /* Retract the old underline, then draw the new one (half each). */
 #define UI_UNDERLINE_TIME UI_CHART_BLEND_TIME
-/* The Particles card fill: clear the old card, then fill the new one. */
-#define UI_PM_FILL_TIME .4f
 #define UI_GAS_RIBBON_LABEL_X 230
 #define UI_GAS_RIBBON_LABEL_Y 45
 #define UI_GAS_RIBBON_LEFT (UI_GAS_SIDE_INSET+UI_GAS_COLUMN_STEP+UI_GAS_COLUMN_WIDTH+UI_GAS_COLUMN_GAP)

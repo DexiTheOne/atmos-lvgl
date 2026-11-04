@@ -385,6 +385,18 @@ int main(int argc,char **argv){
         puts("CO2: empty, short, full and wide-range histories captured in the approved palette.");
         lv_deinit();return 0;
     }
+    if(argc>1 && strcmp(argv[1],"--capture-pm-presses")==0){
+        /* Particles page at the device's frame period, keys pressed every 300 ms. */
+        atmos_set_scene(2);for(int i=0;i<200;i++)advance();
+        const int dir[]={1,1,-1,1,-1,-1,1,1,1,-1};
+        for(int f=0;f<120;f++){
+            if(f%5==0 && f/5<10)atmos_advance(dir[f/5]);
+            if(f%30==7)atmos_set_readings((atmos_readings){617,3,78,1,22.4f,46,2.1f+f*.01f,4,5.3f+f*.01f,1013.2f,20});
+            atmos_step(.059);lv_tick_inc(59);lv_timer_handler();lv_refr_now(display);
+            char path[80];snprintf(path,sizeof path,"pm-press-%03d.bmp",f);save_bmp(path);
+        }
+        lv_deinit();return 0;
+    }
     if(argc>1 && strcmp(argv[1],"--capture-hcho")==0){
         /* Formaldehyde page from zero to the SEN68 maximum, with a short history each. */
         const float readings[]={0,8,24,40,95,250,999.9f,1000};

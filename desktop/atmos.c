@@ -768,16 +768,12 @@ static void start_chart_blend(int s,int from,int to){
    draws the new one left to right, each over half of UI_UNDERLINE_TIME. Like the
    chart blend, off-screen changes switch at once. */
 static float underline_age=UI_UNDERLINE_TIME,underline_from_end=1;static int underline_from=-1;
-/* The age runs on UI_UNDERLINE_TIME's scale; the Particles cards play it faster
-   (UI_PM_FILL_TIME in all) so a key press shows at once. */
-static float underline_speed=1;
 static void start_underline(int s,int from){
     if(s!=scene || moving){underline_age=UI_UNDERLINE_TIME;return;}
     /* Rapid changes never restart a bar: a bar already wiping away keeps going (the
        newest selection draws after it), and a bar still drawing wipes away from the
        length it has reached. */
     float half=UI_UNDERLINE_TIME/2;
-    underline_speed=UI_UNDERLINE_TIME/(s==2?UI_PM_FILL_TIME:UI_UNDERLINE_TIME);
     if(underline_age<half)return;
     underline_from_end=underline_age<UI_UNDERLINE_TIME?ease((underline_age-half)/half):1;
     underline_from=from;underline_age=0;
@@ -2080,7 +2076,7 @@ void atmos_step(double dt){
     dt=fmin(dt,.1f);t+=dt;prerendered_last_step=-1;
     pm_blend_age=fmin(UI_PM_TRANSITION_TIME,pm_blend_age+dt);chart_blend_age=fminf(UI_CHART_BLEND_TIME,chart_blend_age+(float)dt);
     chart_rise_age=fminf(UI_CHART_BLEND_TIME,chart_rise_age+(float)dt);
-    underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)dt*underline_speed);
+    underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)dt);
     float concentration=isfinite(sensor.pm10)?clamp(sensor.pm10,0,UI_PM_DENSITY_LIMIT):0;
     float density_target=UI_PM_DENSITY_MIN+(UI_PM_PARTICLE_MAX-UI_PM_DENSITY_MIN)*
         concentration/(concentration+UI_PM_DENSITY_HALF);
@@ -2113,6 +2109,12 @@ void atmos_set_scene(int requested){
     requested=(requested%ATMOS_SCENES+ATMOS_SCENES)%ATMOS_SCENES;
     if(moving){queued=requested;return;}
     if(requested==scene)return;
+    /* The outgoing snapshot is still for the whole transition, so finish selection
+       animations first: a half-filled card would otherwise look frozen. */
+    if(underline_age<UI_UNDERLINE_TIME || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME){
+        underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
+        data_version++;
+    }
     duration=transition_duration(scene,requested);
     /* Use the hold-time snapshots when they match; the transition clock then starts
        at their time so the end still meets the live scene exactly. */
