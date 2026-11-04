@@ -1876,8 +1876,9 @@ static lv_area_t animated_area(int which){
     }
 }
 static void invalidate_frame(void){
-    /* The Particles selection blend (card fill and chart) stays below the field. */
-    bool pm_lower=scene==2 && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME);
+    /* The Particles selection blend (card fill and chart) stays below the field.
+       A/B TEST: disabled (full redraws) to check the device stall. */
+    bool pm_lower=false && scene==2 && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME);
     if(moving || full_dirty || (!pm_lower && (pm_blend_age<UI_PM_TRANSITION_TIME ||
        underline_age<UI_UNDERLINE_TIME)) || chart_blend_age<UI_CHART_BLEND_TIME || chart_rise_age<UI_CHART_BLEND_TIME){
         lv_obj_invalidate(surface);full_dirty=false;
