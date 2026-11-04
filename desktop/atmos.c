@@ -767,18 +767,26 @@ static void start_chart_blend(int s,int from,int to){
 /* Changing the underlined reading first wipes the old bar away left to right, then
    draws the new one left to right, each over half of UI_UNDERLINE_TIME. Like the
    chart blend, off-screen changes switch at once. */
-static float underline_age=UI_UNDERLINE_TIME;static int underline_from=-1;
+static float underline_age=UI_UNDERLINE_TIME,underline_from_end=1;static int underline_from=-1;
+/* The age runs on UI_UNDERLINE_TIME's scale; the Particles cards play it faster
+   (UI_PM_FILL_TIME in all) so a key press shows at once. */
+static float underline_speed=1;
 static void start_underline(int s,int from){
     if(s!=scene || moving){underline_age=UI_UNDERLINE_TIME;return;}
-    /* A change mid-animation retracts whichever bar is showing now. */
-    if(underline_age<UI_UNDERLINE_TIME/2)from=underline_from;
+    /* Rapid changes never restart a bar: a bar already wiping away keeps going (the
+       newest selection draws after it), and a bar still drawing wipes away from the
+       length it has reached. */
+    float half=UI_UNDERLINE_TIME/2;
+    underline_speed=UI_UNDERLINE_TIME/(s==2?UI_PM_FILL_TIME:UI_UNDERLINE_TIME);
+    if(underline_age<half)return;
+    underline_from_end=underline_age<UI_UNDERLINE_TIME?ease((underline_age-half)/half):1;
     underline_from=from;underline_age=0;
 }
 /* Visible pixel span [*x0,*x1) of a w-pixel underline under `item`, given the
    selected one; both edges travel left to right. Returns false when nothing shows. */
 static bool underline_span(int item,int selected,int w,int *x0,int *x1){
     float a=0,b=item==selected?1:0,half=UI_UNDERLINE_TIME/2;
-    if(underline_age<half){a=ease(underline_age/half);b=item==underline_from?1:0;}
+    if(underline_age<half){a=ease(underline_age/half);b=item==underline_from?underline_from_end:0;}
     else if(underline_age<UI_UNDERLINE_TIME)b=item==selected?ease((underline_age-half)/half):0;
     *x0=(int)lroundf(w*a);*x1=(int)lroundf(w*b);
     return *x1>*x0;
@@ -2004,7 +2012,7 @@ void atmos_init(void){
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
     sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=CYCLE_FIRST;queued=-1;pending_advance=0;
-    pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=chart_rise_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;underline_age=UI_UNDERLINE_TIME;underline_from=-1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
+    pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=chart_rise_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;underline_age=UI_UNDERLINE_TIME;underline_from=-1;underline_from_end=1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
     gas_intensity[0]=gas_level(0);gas_intensity[1]=gas_level(1);
     for(int j=0;j<UI_HCHO_MOLECULES;j++)hcho_grow[j]=j<hcho_target()?1:0;
     t=age=movement=anim_t=0;changed=-10;next_sample=2;paused=hidden=external_data=moving=false;automatic=true;
@@ -2072,7 +2080,7 @@ void atmos_step(double dt){
     dt=fmin(dt,.1f);t+=dt;prerendered_last_step=-1;
     pm_blend_age=fmin(UI_PM_TRANSITION_TIME,pm_blend_age+dt);chart_blend_age=fminf(UI_CHART_BLEND_TIME,chart_blend_age+(float)dt);
     chart_rise_age=fminf(UI_CHART_BLEND_TIME,chart_rise_age+(float)dt);
-    underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)dt);
+    underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)dt*underline_speed);
     float concentration=isfinite(sensor.pm10)?clamp(sensor.pm10,0,UI_PM_DENSITY_LIMIT):0;
     float density_target=UI_PM_DENSITY_MIN+(UI_PM_PARTICLE_MAX-UI_PM_DENSITY_MIN)*
         concentration/(concentration+UI_PM_DENSITY_HALF);
