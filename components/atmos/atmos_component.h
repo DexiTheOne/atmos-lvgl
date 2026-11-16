@@ -62,6 +62,7 @@ class AtmosComponent : public Component {
   void add_band(int reading, float min, float max, int level, const char *text, bool alert);
   /* Link a sensor to a reading (ATMOS_CO2 ...). Linking any replaces the demo data. */
   void set_sensor(int reading, sensor::Sensor *s);
+  void set_startup_delay(int reading, bool on) { atmos_set_startup_delay(reading, on); }
 
  protected:
   static void flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map);

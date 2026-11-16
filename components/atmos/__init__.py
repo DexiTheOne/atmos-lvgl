@@ -47,6 +47,8 @@ CONF_ALERT_ACTIVE = "alert_active"
 CONF_HISTORY_TIME = "history_time"
 CONF_RATINGS = "ratings"
 CONF_SENSORS = "sensors"
+CONF_SENSOR = "sensor"
+CONF_STARTUP_DELAY = "startup_delay"
 
 # Readings in page order, as atmos.h numbers them (ATMOS_CO2 ...): YAML key, select option.
 READINGS = (
@@ -61,6 +63,15 @@ READINGS = (
     ("temperature", "Temperature"),
     ("humidity", "Humidity"),
     ("pressure", "Pressure"),
+)
+# A reading's sensor: an id, or {sensor: id, startup_delay: true} for a sensor that
+# reports nothing for a while after boot (SEN6x): its history waits until it is ready.
+SENSOR_LINK = cv.Any(
+    cv.Schema({
+        cv.Required(CONF_SENSOR): cv.use_id(sensor.Sensor),
+        cv.Optional(CONF_STARTUP_DELAY, default=False): cv.boolean,
+    }),
+    cv.use_id(sensor.Sensor),
 )
 # Bounds from atmos.h (ATMOS_HOLD_*, ATMOS_HISTORY_*, ATMOS_BANDS_MAX, ATMOS_BAND_TEXT).
 HOLD_LIMITS = (2.0, 600.0)  # seconds
@@ -193,7 +204,7 @@ CONFIG_SCHEMA = cv.Schema(
         # unlinked readings show "--". Units: CO2 ppm, VOC/NOx index, formaldehyde ppb,
         # PM ug/m3, temperature degC, humidity %, pressure hPa (convert with filters).
         cv.Optional(CONF_SENSORS, default={}): cv.Schema(
-            {cv.Optional(key): cv.use_id(sensor.Sensor) for key, _ in READINGS}
+            {cv.Optional(key): SENSOR_LINK for key, _ in READINGS}
         ),
         cv.Optional(CONF_RATINGS, default={}): cv.Schema(
             {cv.Optional(key): cv.All(cv.ensure_list(BAND_SCHEMA), _validate_bands) for key, _ in READINGS}
@@ -227,8 +238,12 @@ async def to_code(config):
     cg.add(var.set_splash_timeout_ms(config[CONF_SPLASH_TIMEOUT].total_milliseconds))
 
     for index, (key, _) in enumerate(READINGS):
-        if key in config[CONF_SENSORS]:
-            cg.add(var.set_sensor(index, await cg.get_variable(config[CONF_SENSORS][key])))
+        if (link := config[CONF_SENSORS].get(key)) is not None:
+            if not isinstance(link, dict):
+                link = {CONF_SENSOR: link, CONF_STARTUP_DELAY: False}
+            cg.add(var.set_sensor(index, await cg.get_variable(link[CONF_SENSOR])))
+            if link[CONF_STARTUP_DELAY]:
+                cg.add(var.set_startup_delay(index, True))
     nan = cg.RawExpression("NAN")
     for index, (key, _) in enumerate(READINGS):
         for band in config[CONF_RATINGS].get(key, []):

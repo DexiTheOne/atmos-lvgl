@@ -46,6 +46,11 @@ bool atmos_select_pm_at(int x,int y);
 /* Readings, in page order: what a reading selector lists. */
 enum { ATMOS_CO2, ATMOS_VOC, ATMOS_NOX, ATMOS_HCHO, ATMOS_PM1, ATMOS_PM25, ATMOS_PM4, ATMOS_PM10,
        ATMOS_TEMPERATURE, ATMOS_HUMIDITY, ATMOS_PRESSURE, ATMOS_READINGS };
+/* Start-up delay: a reading whose sensor reports nothing for a while after boot (the
+   SEN6x, about a minute). Its history and chart span then start at its first valid
+   reading, and the chart waits empty at "LAST 0 SEC" until then. Off by default:
+   the chart's span runs from the first sample of any reading. */
+void atmos_set_startup_delay(int reading, bool on);
 /* Move to the page showing a reading and underline/chart it. Restarts the hold. */
 void atmos_select_reading(int reading);
 /* The reading currently underlined/charted (the destination's while moving). */

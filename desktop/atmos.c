@@ -660,6 +660,9 @@ static float pm_weighted(atmos_readings value,const float *weights);
 static float chart_sample(atmos_readings value,int key,const float *weights){
     return weights?pm_weighted(value,weights):field(value,key);
 }
+/* Chart keys (field()) whose reading has a start-up delay (atmos_set_startup_delay()). */
+static bool startup_delay[8];
+static bool chart_valid(float value,int key){return isfinite(value) && (key==4 || value>=0);}
 static float chart_interpolate(const sample *samples,int n,double at,int key,const float *weights){
     for(int i=1;i<n;i++)if(at<=samples[i].at){
         float a=chart_sample(samples[i-1].value,key,weights),b=chart_sample(samples[i].value,key,weights);
@@ -688,6 +691,12 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
         float fraction=(float)i/UI_CHART_Y_INTERVALS;
         chart_tick(mix(low,high,fraction),mix(chart_bottom,UI_CHART_TOP,fraction));
     }
+    /* A reading with a start-up delay (the SEN6x) has no history before its sensor
+       reports: the chart and its span start at its first valid sample, so the chart
+       stays empty at "LAST 0 SEC" until the sensor is ready. */
+    if(startup_delay[key])
+        while(n && !chart_valid(chart_sample(samples[0].value,key,weights),key) &&
+              !(blend && chart_valid(field(samples[0].value,chart_from_key),chart_from_key))){samples++;n--;}
     double first=n?samples[0].at:0,last=n?samples[n-1].at:0;
     /* Once the history span is held, the chart shows exactly that span up to the
        newest sample, interpolating into the one sample kept from before it. */
@@ -1927,8 +1936,13 @@ static void take_sample(void){
         for(int i=2;i<count-1;i++)if(history[i+1].at-history[i-1].at<history[drop+1].at-history[drop-1].at)drop=i;
         memmove(history+drop,history+drop+1,(--count-drop)*sizeof *history);
     }
+    /* The trace rises from the floor when a reading's first valid sample arrives:
+       the first sample, or a sensor finishing its start-up delay. */
+    unsigned seen=0,now=0;
+    for(int i=0;i<count;i++)for(int k=0;k<8;k++)if(chart_valid(field(history[i].value,k),k))seen|=1u<<k;
+    for(int k=0;k<8;k++)if(chart_valid(field(sensor,k),k))now|=1u<<k;
     history[count++]=(sample){t,sensor};full_dirty=true;data_version++;
-    if(count==1)chart_rise_age=0;
+    if(count==1 || (now&~seen))chart_rise_age=0;
 }
 /* Boot splash. The ink of the name and the badge forms one group centred on the screen. */
 static const char *splash_name="Atmos",*splash_subtitle="Visualizing Air Quality";
@@ -2194,6 +2208,12 @@ void atmos_navigate(int direction){atmos_set_scene(cycle_next(queued>=0?queued:m
 void atmos_set_scenario(int value){
     if(value<0 || value>=(int)(sizeof profiles/sizeof profiles[0]))return;
     scenario=value;origin=sensor;target=profiles[value];changed=t;external_data=false;
+}
+void atmos_set_startup_delay(int reading,bool on){
+    /* The chart key (field()) each reading draws; all PM sizes share the PM chart. */
+    static const int key[ATMOS_READINGS]={0,2,3,7,1,1,1,1,4,5,6};
+    if(reading<0 || reading>=ATMOS_READINGS)return;
+    startup_delay[key[reading]]=on;full_dirty=true;
 }
 void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;}
 void atmos_set_wifi(int bars){

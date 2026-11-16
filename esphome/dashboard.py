@@ -60,10 +60,11 @@ class Dashboard:
         while True:
             yield json.loads(await asyncio.wait_for(self.ws.recv(), timeout))
 
-    async def wait_jobs(self, configuration, since, out=sys.stdout, every=5):
+    async def wait_jobs(self, configuration, since, out=sys.stdout, every=5, need=()):
         """Wait for the jobs `configuration` queued after `since` (an install queues
         a compile, then an upload depending on it); print each one's progress and,
-        on failure, its output tail. Returns True when all completed."""
+        on failure, its output tail. Job types in `need` must appear before the
+        wait can end. Returns True when all completed."""
         seen = {}
         while True:
             jobs = [j for j in await self.call("firmware/get_jobs")
@@ -73,7 +74,17 @@ class Dashboard:
                 if seen.get(j["job_id"]) != state:
                     seen[j["job_id"]] = state
                     print(f"{j['job_type']:8} {j['status']:10} {j.get('progress') or 0:3}%", file=out, flush=True)
-            if jobs and all(j["status"] in ("completed", "failed", "cancelled") for j in jobs):
+            done = jobs and all(j["status"] in ("completed", "failed", "cancelled") for j in jobs)
+            failed = any(j["status"] != "completed" for j in jobs)
+            missing = set(need) - {j["job_type"] for j in jobs}
+            if done and missing and not failed:
+                # The dashboard did not queue the upload after the compile: queue it.
+                if "upload" in missing and getattr(self, "_upload", None):
+                    await self.call("firmware/upload", self._upload)
+                    self._upload = None
+                    await asyncio.sleep(every)
+                    continue
+            if done:
                 for j in jobs:
                     if j["status"] != "completed":
                         print("\n".join(j.get("output") or [])[-4000:], j.get("error") or "", file=out)
@@ -123,7 +134,9 @@ async def main(argv):
             since = max((j["created_at"] for j in jobs), default="")
             await d.call("firmware/install", {"configuration": rest[0], "port": port,
                                               "force_local": False, "bootloader": False})
-            ok = await d.wait_jobs(rest[0], since)
+            # Dashboard 1.12 may queue only the compile; the upload is then started here.
+            d._upload = {"configuration": rest[0], "port": port}
+            ok = await d.wait_jobs(rest[0], since, need=("compile", "upload"))
             print("== installed" if ok else "== failed")
             return 0 if ok else 1
         elif cmd == "logs":

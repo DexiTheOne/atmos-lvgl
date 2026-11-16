@@ -78,6 +78,7 @@ atmos:
   #   co2: my_co2
   #   pm2_5: my_pm25
   #   temperature: my_temperature
+  #   pm1: {sensor: my_pm1, startup_delay: true}  # chart waits for the SEN6x start-up
   #   humidity: my_humidity
 
   # Home Assistant entities (each optional).
