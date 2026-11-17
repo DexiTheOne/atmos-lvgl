@@ -1,4 +1,6 @@
 #include "scd30.h"
+#include <algorithm>
+#include <cmath>
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"
 
@@ -115,6 +117,9 @@ void SCD30Component::setup() {
   }
 
   // check each 500ms if data is ready, and read it in that case
+  this->sensor_restarted_();
+  this->calibration_publish_("Idle");
+
   this->set_interval("status-check", 500, [this]() {
     this->apply_pressure_source_();
     if (this->is_data_ready_())
@@ -200,6 +205,7 @@ void SCD30Component::update() {
       this->temperature_sensor_->publish_state(temperature.value);
     if (this->humidity_sensor_ != nullptr)
       this->humidity_sensor_->publish_state(humidity.value);
+    this->calibration_sample_(co2.value, humidity.value);
 
     this->status_clear_warning();
   });
@@ -253,6 +259,7 @@ bool SCD30Component::sync_asc_() {
   delay(30);
 #endif
   ESP_LOGI(TAG, "Setting ASC %s", ONOFF(this->enable_asc_));
+  this->sensor_restarted_();
   return this->write_command(SCD30_CMD_AUTOMATIC_SELF_CALIBRATION, this->enable_asc_ ? 1 : 0);
 }
 
@@ -284,9 +291,124 @@ void SCD30Component::apply_pressure_source_() {
       this->pressure_sent_ = true;
     }
     this->ambient_pressure_compensation_ = mbar;
+    this->sensor_restarted_();  // treated as a restart: the calibration window starts again
   } else {
     ESP_LOGW(TAG, "Unable to set ambient pressure compensation");
   }
+}
+
+// atmos: guarded forced calibration (see scd30.h).
+static const uint32_t CAL_RESTART_DIP_MS = 120000;  // readings dip for 1-2 min after a restart
+static const uint32_t CAL_VERIFY_MS = 60000;         // averaged after the dip
+static const float CAL_VERIFY_TOLERANCE = 30.0f;     // ppm
+
+void SCD30Component::calibration_publish_(const std::string &text) {
+  ESP_LOGI(TAG, "Calibration: %s", text.c_str());
+  if (this->cal_status_ != nullptr)
+    this->cal_status_->publish_state(text);
+}
+
+void SCD30Component::start_calibration() {
+  if (this->is_failed()) {
+    this->calibration_publish_("Failed (sensor not running)");
+    return;
+  }
+  this->cal_state_ = CAL_SETTLING;
+  this->cal_start_ms_ = millis();
+  this->window_start_ms_ = 0;
+  this->last_minutes_ = -1;
+  this->calibration_publish_("Waiting for steady air");
+}
+
+void SCD30Component::cancel_calibration() {
+  if (this->cal_state_ == CAL_IDLE)
+    return;
+  this->cal_state_ = CAL_IDLE;
+  this->calibration_publish_("Cancelled");
+}
+
+void SCD30Component::calibration_sample_(float co2, float rh) {
+  if (this->cal_state_ == CAL_IDLE || !std::isfinite(co2) || !std::isfinite(rh))
+    return;
+  const uint32_t now = millis();
+  char buf[96];
+
+  if (this->cal_state_ == CAL_SETTLING) {
+    if (now - this->cal_start_ms_ > this->cal_timeout_ms_) {
+      this->cal_state_ = CAL_IDLE;
+      snprintf(buf, sizeof buf, "Timed out (not steady for %u min)", (unsigned) (this->cal_settle_ms_ / 60000));
+      this->calibration_publish_(buf);
+      return;
+    }
+    if (now - this->restart_ms_ < CAL_RESTART_DIP_MS) {
+      if (this->window_start_ms_ != 0 || this->last_minutes_ != -2)
+        this->calibration_publish_("Waiting for sensor restart");
+      this->window_start_ms_ = 0;
+      this->last_minutes_ = -2;
+      return;
+    }
+    bool restart = this->window_start_ms_ == 0;
+    if (!restart) {
+      float cmin = std::min(this->win_co2_min_, co2), cmax = std::max(this->win_co2_max_, co2);
+      float rmin = std::min(this->win_rh_min_, rh), rmax = std::max(this->win_rh_max_, rh);
+      if (cmax - cmin > this->cal_co2_spread_ || rmax - rmin > this->cal_rh_spread_) {
+        restart = true;
+      } else {
+        this->win_co2_min_ = cmin, this->win_co2_max_ = cmax, this->win_rh_min_ = rmin, this->win_rh_max_ = rmax;
+        this->win_co2_sum_ += co2;
+        this->win_count_++;
+      }
+    }
+    if (restart) {  // a new steady window starts with this reading
+      this->window_start_ms_ = now;
+      this->win_co2_min_ = this->win_co2_max_ = co2;
+      this->win_rh_min_ = this->win_rh_max_ = rh;
+      this->win_co2_sum_ = co2;
+      this->win_count_ = 1;
+    }
+    const uint32_t steady = now - this->window_start_ms_;
+    if (steady >= this->cal_settle_ms_) {
+      this->cal_before_ = this->win_co2_sum_ / (float) this->win_count_;
+      this->cal_state_ = CAL_VERIFYING;
+      this->calibration_publish_("Applying");
+      this->set_timeout("cal-apply", 50, [this]() {
+        if (!this->force_recalibration_with_reference(this->cal_reference_)) {
+          this->cal_state_ = CAL_IDLE;
+          this->calibration_publish_("Failed (sensor rejected the command)");
+          return;
+        }
+        this->sensor_restarted_();
+        this->ver_sum_ = 0;
+        this->ver_count_ = 0;
+        this->calibration_publish_("Applied; verifying");
+      });
+      return;
+    }
+    int minutes = (int) (steady / 60000);
+    if (minutes != this->last_minutes_) {
+      this->last_minutes_ = minutes;
+      snprintf(buf, sizeof buf, "Settling %d/%u min", minutes, (unsigned) (this->cal_settle_ms_ / 60000));
+      this->calibration_publish_(buf);
+    }
+    return;
+  }
+
+  // CAL_VERIFYING: skip the post-calibration dip, then average for CAL_VERIFY_MS.
+  if (now - this->restart_ms_ < CAL_RESTART_DIP_MS)
+    return;
+  this->ver_sum_ += co2;
+  this->ver_count_++;
+  if (now - this->restart_ms_ < CAL_RESTART_DIP_MS + CAL_VERIFY_MS)
+    return;
+  float after = this->ver_sum_ / (float) this->ver_count_;
+  this->cal_state_ = CAL_IDLE;
+  if (std::fabs(after - (float) this->cal_reference_) <= CAL_VERIFY_TOLERANCE) {
+    snprintf(buf, sizeof buf, "Calibrated (was %d, now %d ppm)", (int) lroundf(this->cal_before_), (int) lroundf(after));
+  } else {
+    snprintf(buf, sizeof buf, "Check reading (%d ppm after calibrating to %u)", (int) lroundf(after),
+             (unsigned) this->cal_reference_);
+  }
+  this->calibration_publish_(buf);
 }
 
 }  // namespace esphome::scd30

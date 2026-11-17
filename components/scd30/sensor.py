@@ -1,6 +1,6 @@
 from esphome import automation, core
 import esphome.codegen as cg
-from esphome.components import i2c, sensirion_common, sensor
+from esphome.components import i2c, sensirion_common, sensor, text_sensor
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_ALTITUDE_COMPENSATION,
@@ -28,7 +28,33 @@ from esphome.cpp_generator import MockObj, TemplateArgsType
 from esphome.types import ConfigType
 
 DEPENDENCIES = ["i2c"]
-AUTO_LOAD = ["sensirion_common"]
+AUTO_LOAD = ["sensirion_common", "text_sensor"]
+
+# atmos: guarded forced calibration (start_calibration() / cancel_calibration()).
+CONF_CALIBRATION = "calibration"
+CONF_STATUS = "status"
+CONF_REFERENCE = "reference"
+CONF_SETTLE_TIME = "settle_time"
+CONF_CO2_SPREAD = "co2_spread"
+CONF_HUMIDITY_SPREAD = "humidity_spread"
+CONF_CAL_TIMEOUT = "timeout"
+
+CALIBRATION_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_STATUS): text_sensor.text_sensor_schema(),
+        cv.Optional(CONF_REFERENCE, default=420): cv.int_range(min=400, max=2000),
+        cv.Optional(CONF_SETTLE_TIME, default="10min"): cv.All(
+            cv.positive_time_period_milliseconds,
+            cv.Range(min=core.TimePeriod(minutes=1), max=core.TimePeriod(minutes=60)),
+        ),
+        cv.Optional(CONF_CAL_TIMEOUT, default="60min"): cv.All(
+            cv.positive_time_period_milliseconds,
+            cv.Range(min=core.TimePeriod(minutes=5), max=core.TimePeriod(hours=24)),
+        ),
+        cv.Optional(CONF_CO2_SPREAD, default=20.0): cv.float_range(min=1.0, max=500.0),
+        cv.Optional(CONF_HUMIDITY_SPREAD, default=2.0): cv.float_range(min=0.1, max=50.0),
+    }
+)
 
 scd30_ns = cg.esphome_ns.namespace("scd30")
 SCD30Component = scd30_ns.class_(
@@ -73,6 +99,7 @@ CONFIG_SCHEMA = (
             cv.Optional(CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE): cv.use_id(
                 sensor.Sensor
             ),
+            cv.Optional(CONF_CALIBRATION, default={}): CALIBRATION_SCHEMA,
             cv.Optional(CONF_TEMPERATURE_OFFSET): cv.All(
                 cv.temperature_delta,
                 cv.float_range(min=0, max=655.35),
@@ -109,6 +136,16 @@ async def to_code(config: ConfigType) -> None:
     if CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE in config:
         sens = await cg.get_variable(config[CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE])
         cg.add(var.set_ambient_pressure_source(sens))
+
+    cal = config[CONF_CALIBRATION]
+    cg.add(var.set_calibration_reference(cal[CONF_REFERENCE]))
+    cg.add(var.set_calibration_settle_time(cal[CONF_SETTLE_TIME].total_milliseconds))
+    cg.add(var.set_calibration_timeout(cal[CONF_CAL_TIMEOUT].total_milliseconds))
+    cg.add(var.set_calibration_co2_spread(cal[CONF_CO2_SPREAD]))
+    cg.add(var.set_calibration_humidity_spread(cal[CONF_HUMIDITY_SPREAD]))
+    if CONF_STATUS in cal:
+        status = await text_sensor.new_text_sensor(cal[CONF_STATUS])
+        cg.add(var.set_calibration_status(status))
 
     if CONF_TEMPERATURE_OFFSET in config:
         cg.add(var.set_temperature_offset(config[CONF_TEMPERATURE_OFFSET]))
