@@ -154,6 +154,22 @@ class AtmosReadingSelect : public select::Select, public Parented<AtmosComponent
   void control(size_t index) override { this->parent_->select_option((int) index); }
 };
 
+/* Display unit of temperature (ATMOS_TEMP_*) or pressure (ATMOS_PRESSURE_*), restored
+   from flash. Only the screen converts; sensors and Home Assistant keep degC and hPa. */
+class AtmosUnitSelect : public select::Select, public Component {
+ public:
+  void set_pressure(bool pressure) { this->pressure_ = pressure; }
+  void set_initial(int index) { this->initial_ = index; }
+  void setup() override;
+  float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }
+
+ protected:
+  void control(size_t index) override;
+  bool pressure_{false};
+  int initial_{0};
+  ESPPreferenceObject pref_;
+};
+
 class AtmosAutoSwitch : public switch_::Switch, public Component, public Parented<AtmosComponent> {
  public:
   void setup() override;

@@ -256,6 +256,25 @@ void AtmosAlertSwitch::write_state(bool state) {
   this->publish_state(state);
 }
 
+void AtmosUnitSelect::setup() {
+  int index = this->initial_;
+  this->pref_ = this->make_entity_preference<int>();
+  int restored;
+  if (this->pref_.load(&restored) && restored >= 0 && (size_t) restored < this->size())
+    index = restored;
+  this->control((size_t) index);
+}
+
+void AtmosUnitSelect::control(size_t index) {
+  if (this->pressure_)
+    atmos_set_pressure_unit((int) index);
+  else
+    atmos_set_temperature_unit((int) index);
+  int saved = (int) index;
+  this->pref_.save(&saved);
+  this->publish_state(index);
+}
+
 void AtmosNumber::setup() {
   float value = this->initial_;
   this->pref_ = this->make_entity_preference<float>();

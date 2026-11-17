@@ -155,6 +155,8 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key=='P'){atmos_set_alert_focus(!atmos_alert_focus());update_title();}
         else if(key=='M'){atmos_set_alert_sound(!atmos_alert_sound());update_title();}
         else if(key=='W')atmos_set_wifi(atmos_wifi()<=-1?3:atmos_wifi()-1); /* 3, 2, 1, 0, off */
+        else if(key=='U')atmos_set_temperature_unit(!atmos_temperature_unit()); /* C, F */
+        else if(key=='I')atmos_set_pressure_unit((atmos_pressure_unit()+1)%4); /* hPa, kPa, mmHg, inHg */
         else if(key=='H'){hw_pace=!hw_pace;update_title();}
         else if(key=='S')save_bmp("atmos-frame.bmp");
         else if(key=='R')reboot();
@@ -231,6 +233,11 @@ int main(int argc,char **argv){
         else if(strncmp(argv[i],"--alert-enter=",14)==0)atmos_set_alert_times((float)atof(argv[i]+14),NAN);
         else if(strncmp(argv[i],"--alert-leave=",14)==0)atmos_set_alert_times(NAN,(float)atof(argv[i]+14));
         else if(strncmp(argv[i],"--alert-cooldown=",17)==0)atmos_set_alert_sound_cooldown((float)atof(argv[i]+17));
+        else if(strncmp(argv[i],"--temp-unit=",12)==0)atmos_set_temperature_unit(argv[i][12]=='F' || argv[i][12]=='f');
+        else if(strncmp(argv[i],"--pressure-unit=",16)==0){
+            static const char *const names[]={"hPa","kPa","mmHg","inHg"};
+            for(int u=0;u<4;u++)if(_stricmp(argv[i]+16,names[u])==0)atmos_set_pressure_unit(u);
+        }
         else if(strcmp(argv[i],"--alert-focus")==0)atmos_set_alert_focus(true);
         else if(strncmp(argv[i],"--paper=",8)==0){if(!parse_rgb(argv[i]+8,&paper_rgb)){fprintf(stderr,"Bad --paper\n");return 2;}}
         else argv[kept++]=argv[i];
@@ -444,6 +451,32 @@ int main(int argc,char **argv){
             }
         }
         puts("Full scale: sensor maximums and near-maximum readings captured on every page.");
+        lv_deinit();return 0;
+    }
+    if(argc>1 && strcmp(argv[1],"--capture-units")==0){
+        /* Climate page and overview in every display unit, at the sensor maximums, a
+           typical room and the minimum. History is SI, so the charts must agree. */
+        const atmos_readings cases[]={{40000,1000,500,500,60,100,1000,1000,1000,1100,1000},
+            {624,3.2f,78,1,22.4f,46,2.1f,4.0f,5.3f,1013.2f,9},{624,3.2f,78,1,-10,0,2.1f,4.0f,5.3f,300,9}};
+        atmos_toggle_auto();
+        for(int c=0;c<3;c++){
+            atmos_set_readings(cases[c]);
+            for(int i=0;i<62*40;i++)advance();
+            for(int u=0;u<4;u++){
+                atmos_set_temperature_unit(u&1);atmos_set_pressure_unit(u);
+                for(int row=0;row<3;row++){
+                    atmos_select_reading(ATMOS_TEMPERATURE+row);
+                    for(int i=0;i<80;i++)advance();
+                    if(verify_frame())return 24;
+                    char path[80];snprintf(path,sizeof path,"units-%d-%d-climate-%d.bmp",c,u,row);save_bmp(path);
+                }
+                atmos_set_scene(0);for(int i=0;i<80;i++)advance();
+                if(verify_frame())return 24;
+                char path[80];snprintf(path,sizeof path,"units-%d-%d-overview.bmp",c,u);save_bmp(path);
+            }
+        }
+        atmos_set_temperature_unit(ATMOS_TEMP_C);atmos_set_pressure_unit(ATMOS_PRESSURE_HPA);
+        puts("Units: climate page and overview captured in every display unit.");
         lv_deinit();return 0;
     }
     if(argc>1 && strcmp(argv[1],"--capture-dashboard")==0){

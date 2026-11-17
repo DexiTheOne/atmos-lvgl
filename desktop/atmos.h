@@ -38,6 +38,15 @@ void atmos_set_readings(atmos_readings readings);
 void atmos_set_wifi(int bars);
 int atmos_wifi(void);
 int atmos_wifi_bars(float dbm);
+/* Display units of the climate page, the overview's temperature and their history
+   charts. Only what is drawn converts: readings passed in, rating bands, alerts and
+   history stay in C and hPa (what Home Assistant receives). Bad values are ignored. */
+enum { ATMOS_TEMP_C, ATMOS_TEMP_F };
+enum { ATMOS_PRESSURE_HPA, ATMOS_PRESSURE_KPA, ATMOS_PRESSURE_MMHG, ATMOS_PRESSURE_INHG };
+void atmos_set_temperature_unit(int unit);
+int atmos_temperature_unit(void);
+void atmos_set_pressure_unit(int unit);
+int atmos_pressure_unit(void);
 void atmos_select_pm(int size);
 void atmos_cycle_pm(int direction);
 bool atmos_select_pm_at(int x,int y);

@@ -15,6 +15,7 @@ from esphome.components.esp32 import add_idf_component, add_idf_sdkconfig_option
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_ID,
+    CONF_INITIAL_OPTION,
     CONF_INITIAL_VALUE,
     CONF_LEVEL,
     CONF_MAX_VALUE,
@@ -39,6 +40,8 @@ CONF_SPLASH_NAME = "splash_name"
 CONF_SPLASH_SUBTITLE = "splash_subtitle"
 CONF_SPLASH_TIMEOUT = "splash_timeout"
 CONF_READING_SELECT = "reading_select"
+CONF_TEMPERATURE_UNIT = "temperature_unit"
+CONF_PRESSURE_UNIT = "pressure_unit"
 CONF_AUTO_ADVANCE = "auto_advance"
 CONF_HOLD_TIME = "hold_time"
 CONF_ALERT = "alert"
@@ -108,11 +111,24 @@ atmos_ns = cg.esphome_ns.namespace("atmos")
 AtmosComponent = atmos_ns.class_("AtmosComponent", cg.Component)
 AdvanceAction = atmos_ns.class_("AdvanceAction", automation.Action)
 AtmosReadingSelect = atmos_ns.class_("AtmosReadingSelect", select.Select)
+AtmosUnitSelect = atmos_ns.class_("AtmosUnitSelect", select.Select, cg.Component)
 AtmosAutoSwitch = atmos_ns.class_("AtmosAutoSwitch", switch.Switch, cg.Component)
 AtmosAlertSwitch = atmos_ns.class_("AtmosAlertSwitch", switch.Switch, cg.Component)
 AtmosNumber = atmos_ns.class_("AtmosNumber", number.Number, cg.Component)
 ST7305RLCD = cg.esphome_ns.namespace("st7305_rlcd").class_("ST7305RLCD")
 
+
+
+# Display units (atmos.h ATMOS_TEMP_* / ATMOS_PRESSURE_*, in order). Only the screen
+# converts: linked sensors, ratings and what Home Assistant receives stay degC and hPa.
+TEMPERATURE_UNITS = ["°C", "°F"]
+PRESSURE_UNITS = ["hPa", "kPa", "mmHg", "inHg"]
+
+
+def _unit_select_schema(options, icon):
+    return select.select_schema(AtmosUnitSelect, entity_category=ENTITY_CATEGORY_CONFIG, icon=icon).extend(
+        {cv.Optional(CONF_INITIAL_OPTION, default=options[0]): cv.one_of(*options)}
+    ).extend(cv.COMPONENT_SCHEMA)
 
 
 def _number_schema(unit, limits, default_max, default_initial):
@@ -202,6 +218,9 @@ CONFIG_SCHEMA = cv.Schema(
         ),
         cv.Optional(CONF_REPORT_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_READING_SELECT): select.select_schema(AtmosReadingSelect, icon="mdi:gauge"),
+        # Units the screen shows temperature and pressure in (readings and charts).
+        cv.Optional(CONF_TEMPERATURE_UNIT): _unit_select_schema(TEMPERATURE_UNITS, "mdi:thermometer"),
+        cv.Optional(CONF_PRESSURE_UNIT): _unit_select_schema(PRESSURE_UNITS, "mdi:gauge"),
         cv.Optional(CONF_AUTO_ADVANCE): switch.switch_schema(
             AtmosAutoSwitch,
             default_restore_mode="RESTORE_DEFAULT_ON",
@@ -298,6 +317,12 @@ async def to_code(config):
         sel = await select.new_select(conf, options=["Auto advance"] + [name for _, name in READINGS])
         await cg.register_parented(sel, var)
         cg.add(var.set_reading_select(sel))
+    for key, options, pressure in ((CONF_TEMPERATURE_UNIT, TEMPERATURE_UNITS, False), (CONF_PRESSURE_UNIT, PRESSURE_UNITS, True)):
+        if conf := config.get(key):
+            sel = await select.new_select(conf, options=options)
+            await cg.register_component(sel, conf)
+            cg.add(sel.set_pressure(pressure))
+            cg.add(sel.set_initial(options.index(conf[CONF_INITIAL_OPTION])))
     if conf := config.get(CONF_AUTO_ADVANCE):
         sw = await switch.new_switch(conf)
         await cg.register_component(sw, conf)

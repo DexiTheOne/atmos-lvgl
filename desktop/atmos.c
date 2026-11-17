@@ -299,6 +299,30 @@ static float field(atmos_readings v,int key){
     switch(key){case 0:return v.co2;case 1:return v.pm;case 2:return v.voc;
     case 3:return v.nox;case 4:return v.temp;case 5:return v.rh;case 6:return v.pressure;default:return v.hcho;}
 }
+/* Display units. Readings, bands, alerts and history stay in SI (C, hPa); only
+   the text and chart scales convert, by shown() = value*scale+offset. */
+static int temp_unit=ATMOS_TEMP_C,pressure_unit=ATMOS_PRESSURE_HPA;
+static const char *const temp_unit_text[]={"\xC2\xB0" "C","\xC2\xB0" "F"};
+static const char *const pressure_unit_text[]={"hPa","kPa","mmHg","inHg"};
+static float shown_scale(int key){
+    static const float pressure[]={1.0f,0.1f,0.750062f,0.0295300f};
+    return key==4?(temp_unit==ATMOS_TEMP_F?1.8f:1.0f):key==6?pressure[pressure_unit]:1.0f;
+}
+static float shown(int key,float value){return value*shown_scale(key)+(key==4 && temp_unit==ATMOS_TEMP_F?32.0f:0.0f);}
+static const char *shown_unit(int key){return key==4?temp_unit_text[temp_unit]:key==6?pressure_unit_text[pressure_unit]:"%";}
+/* Decimals of a climate reading (key 4-6). */
+static int shown_decimals(int key){
+    static const int pressure[]={1,1,0,2};
+    return key==5?0:key==6?pressure[pressure_unit]:1;
+}
+/* Widest climate reading up to the sensor maximum, as digits and decimals:
+   60.0 C / 140.0 F; 100 %; 1100 hPa, 110.0 kPa, 825 mmHg, 32.48 inHg. */
+static void shown_widest(int key,int *digits,int *decimals){
+    static const int pressure_digits[]={4,4,3,4},pressure_decimals[]={0,1,0,2};
+    if(key==4){*digits=temp_unit==ATMOS_TEMP_F?4:3;*decimals=1;}
+    else if(key==5){*digits=3;*decimals=0;}
+    else{*digits=pressure_digits[pressure_unit];*decimals=pressure_decimals[pressure_unit];}
+}
 static const lv_font_t *dashboard_font(int size){
     switch(size){case 12:return &ui_bold_12;case 112:return &ui_bold_112;case 96:return &ui_bold_96;case 80:return &ui_bold_80;case 72:return &ui_bold_72;case 64:return &ui_bold_64;
     case 60:return &ui_bold_60;case 48:return &ui_bold_48;case 40:return &ui_bold_40;case 32:return &ui_bold_32;
@@ -491,13 +515,14 @@ static void format_reading(char *out,size_t capacity,float value,int decimals,bo
 }
 /* Ink width of the widest number with `digits` digits (and a decimal point
    when `point`), so fixed layouts fit any reading up to the sensor maximum. */
-static int widest_number(int digits,bool point,int size){
+static int widest_decimal(int digits,int decimals,int size){
     char widest='0';int best=-1;
     for(char d='0';d<='9';d++){char s[2]={d,0};int w=text_width(s,dashboard_font(size));if(w>best){best=w;widest=d;}}
     char s[16];int n=0;
-    for(int i=0;i<digits;i++){if(point && i==digits-1)s[n++]='.';s[n++]=widest;}
+    for(int i=0;i<digits && n<14;i++){if(decimals && i==digits-decimals)s[n++]='.';s[n++]=widest;}
     s[n]=0;return ink_width(s,size);
 }
+static int widest_number(int digits,bool point,int size){return widest_decimal(digits,point?1:0,size);}
 /* The column starts at the left margin, sized to its widest ink; the flower
    ends at the right margin. */
 static void primary_measurement(void){
@@ -527,7 +552,7 @@ static void draw_dashboard(void){
     rect((UI_WIDTH-UI_FOOTER_DIVIDER)/2,UI_FOOTER_TOP+UI_FOOTER_PADDING,UI_FOOTER_DIVIDER,
         UI_HEIGHT-UI_FOOTER_TOP-2*UI_FOOTER_PADDING,true,0);
     footer_measurement(UI_WIDTH/4,"PM2.5",sensor.pm,"\xc2\xb5" "g/m\xc2\xb3");
-    footer_measurement(3*UI_WIDTH/4,"Temperature",sensor.temp,"\xc2\xb0" "C");
+    footer_measurement(3*UI_WIDTH/4,"Temperature",isfinite(sensor.temp)?shown(4,sensor.temp):NAN,shown_unit(4));
 }
 static int co2_bubble_radius(int j){
     static const int radii[UI_BUBBLE_COUNT]={6,11,16,23,8,13,5,9,19,7,12,10};return radii[j];
@@ -683,7 +708,7 @@ static void chart_axes(const char *name,const char *unit,float span){
    and scale policy. Geometry never depends on the selected measurement. */
 static float pm_weighted(atmos_readings value,const float *weights);
 static float chart_sample(atmos_readings value,int key,const float *weights){
-    return weights?pm_weighted(value,weights):field(value,key);
+    return weights?pm_weighted(value,weights):shown(key,field(value,key));
 }
 /* Chart keys (field()) whose reading has a start-up delay (atmos_set_startup_delay()). */
 static bool startup_delay[8];
@@ -771,18 +796,19 @@ static void chart_range(int key,float minimum_range,float padding_ratio,float *l
     float minimum=INFINITY,maximum=-INFINITY;
     for(int i=0;i<count;i++){
         float value=field(history[i].value,key);
-        if(isfinite(value) && (key==4 || value>=0)){minimum=fmin(minimum,value);maximum=fmax(maximum,value);}
+        if(isfinite(value) && (key==4 || value>=0)){value=shown(key,value);minimum=fmin(minimum,value);maximum=fmax(maximum,value);}
     }
     if(!isfinite(minimum)){minimum=0;maximum=minimum_range;}
     /* Large readings get a wider scale, so ticks stay short round numbers
        (whole thousands for CO2 from UI_CHART_THOUSANDS). */
+    minimum_range*=shown_scale(key);
     minimum_range=fmax(minimum_range,fabs(maximum)*UI_CHART_MIN_RANGE_RATIO);
     if(key==0 && maximum>=UI_CHART_THOUSANDS)minimum_range=fmax(minimum_range,2000);
     float range=fmax(minimum_range,maximum-minimum),padding=range*padding_ratio;
     float step=chart_nice_step((range+2*padding)/UI_CHART_Y_INTERVALS);
     float low=floor((minimum-padding)/step)*step;
     if(key!=4)low=fmax(0,low);
-    float high=fmin(fmax(low+step,ceil((maximum+padding)/step)*step),field_limit(key));
+    float high=fmin(fmax(low+step,ceil((maximum+padding)/step)*step),shown(key,field_limit(key)));
     *low_out=low;*high_out=high;
 }
 static void history_chart(int key,const char *name,const char *unit,float minimum_range,float padding_ratio){
@@ -1091,10 +1117,9 @@ static void draw_pm_detail(void){
 }
 static void climate_chart(int key,int top){
     static const char *const name[]={"Temperature","Humidity","Pressure"};
-    static const char *const unit[]={"\xC2\xB0" "C","%","hPa"};
     static const float range[]={UI_CLIMATE_MIN_TEMP_RANGE,UI_CLIMATE_MIN_RH_RANGE,UI_CLIMATE_MIN_PRESSURE_RANGE};
     (void)top;
-    history_chart(key,name[key-4],unit[key-4],range[key-4],UI_CLIMATE_PADDING);
+    history_chart(key,name[key-4],shown_unit(key),range[key-4],UI_CLIMATE_PADDING);
 }
 /* Three rows, one per reading, separated by rules across the content width.
    Each row reads left to right: label, value, unit, divider, icon. Label, value
@@ -1109,20 +1134,22 @@ struct climate_layout_t{
 };
 typedef struct climate_layout_t climate_layout_t;
 static const char *const climate_labels[3]={"Temperature","Humidity","Pressure"};
-static const char *const climate_units[3]={"\xC2\xB0" "C","%","hPa"};
 static int font_baseline(int size){const lv_font_t *f=dashboard_font(size);return f->line_height-f->base_line;}
 static climate_layout_t climate_layout(void){
     climate_layout_t l;
     const float reading[3]={sensor.temp,sensor.rh,sensor.pressure};
-    /* "60.0" for temperature, "100" for humidity, "1100" for pressure. */
-    const int widest[3]={widest_number(3,true,UI_CLIMATE_VALUE_SIZE),widest_number(3,false,UI_CLIMATE_VALUE_SIZE),
-        widest_number(4,false,UI_CLIMATE_VALUE_SIZE)};
+    int widest[3];
+    for(int row=0;row<3;row++){int d,f;shown_widest(4+row,&d,&f);widest[row]=widest_decimal(d,f,UI_CLIMATE_VALUE_SIZE);}
     l.label_x=UI_MARGIN;l.value_center=UI_WIDTH/2;
+    /* Wider display units (140.0 F, 110.0 kPa) move the value column right, off the labels. */
+    for(int row=0;row<3;row++)
+        l.value_center=LV_MAX(l.value_center,l.label_x+ink_width(climate_labels[row],UI_CLIMATE_LABEL_SIZE)+
+            UI_TEXT_GAP+(widest[row]+1)/2);
     int reach=0;
     for(int row=0;row<3;row++){
-        format_reading(l.value[row],sizeof l.value[row],reading[row],row==1?0:1,false);
+        format_reading(l.value[row],sizeof l.value[row],isfinite(reading[row])?shown(4+row,reading[row]):NAN,shown_decimals(4+row),false);
         reach=LV_MAX(reach,l.value_center+(widest[row]+1)/2+UI_CLIMATE_UNIT_GAP+
-            ink_width(climate_units[row],UI_CLIMATE_UNIT_SIZE));
+            ink_width(shown_unit(4+row),UI_CLIMATE_UNIT_SIZE));
     }
     int spare=UI_WIDTH-UI_MARGIN-reach-UI_DIVIDER-UI_CLIMATE_ICON_SIZE;
     l.divider_x=reach+spare/3;
@@ -1340,8 +1367,8 @@ static void draw_climate_detail(void){
         int value_x=l.value_center-(ink.x1+ink.x2+1)/2;
         dashboard_text(l.value[row],value_x,b-value_base,UI_CLIMATE_VALUE_SIZE,false);
         int unit_left=value_x+ink.x2+1+UI_CLIMATE_UNIT_GAP;
-        ink=header_ink_bounds(climate_units[row],dashboard_font(UI_CLIMATE_UNIT_SIZE));
-        dashboard_text(climate_units[row],unit_left-ink.x1,b-unit_base,UI_CLIMATE_UNIT_SIZE,false);
+        ink=header_ink_bounds(shown_unit(4+row),dashboard_font(UI_CLIMATE_UNIT_SIZE));
+        dashboard_text(shown_unit(4+row),unit_left-ink.x1,b-unit_base,UI_CLIMATE_UNIT_SIZE,false);
         rect(l.divider_x,l.row_center[row]-UI_CLIMATE_ICON_SIZE/2,UI_DIVIDER,UI_CLIMATE_ICON_SIZE,false,0);
     }
     climate_icons(&l);history_panel();
@@ -2269,6 +2296,20 @@ void atmos_set_wifi(int bars){
     wifi_bars=bars;full_dirty=true;data_version++;if(surface)lv_obj_invalidate(surface);
 }
 int atmos_wifi(void){return wifi_bars;}
+static void units_changed(void){
+    chart_blend_age=UI_CHART_BLEND_TIME; /* a frozen blend scale is in the old unit */
+    full_dirty=true;data_version++;if(surface)lv_obj_invalidate(surface);
+}
+void atmos_set_temperature_unit(int unit){
+    if(unit<ATMOS_TEMP_C || unit>ATMOS_TEMP_F || unit==temp_unit)return;
+    temp_unit=unit;units_changed();
+}
+int atmos_temperature_unit(void){return temp_unit;}
+void atmos_set_pressure_unit(int unit){
+    if(unit<ATMOS_PRESSURE_HPA || unit>ATMOS_PRESSURE_INHG || unit==pressure_unit)return;
+    pressure_unit=unit;units_changed();
+}
+int atmos_pressure_unit(void){return pressure_unit;}
 int atmos_wifi_bars(float dbm){return isnan(dbm)?-1:dbm>=-60.0f?3:dbm>=-70.0f?2:dbm>=-80.0f?1:0;}
 void atmos_toggle_pause(void){paused=!paused;}
 void atmos_toggle_auto(void){automatic=!automatic;}
@@ -2344,6 +2385,20 @@ int atmos_led_reading(int s){
 int atmos_step_prerendered(void){return prerendered_last_step;}
 int atmos_self_test(void){
     if(count!=0)return 1;
+    /* Display units convert only what is drawn; bands and history stay SI. */
+    {
+        float before=reading_value(ATMOS_TEMPERATURE);
+        atmos_set_temperature_unit(ATMOS_TEMP_F);atmos_set_pressure_unit(ATMOS_PRESSURE_INHG);
+        bool ok=fabsf(shown(4,100.0f)-212.0f)<.01f && fabsf(shown(4,-40.0f)+40.0f)<.01f &&
+            fabsf(shown(6,1013.25f)-29.921f)<.01f && strcmp(shown_unit(6),"inHg")==0 &&
+            (isnan(before)?isnan(reading_value(ATMOS_TEMPERATURE)):reading_value(ATMOS_TEMPERATURE)==before);
+        atmos_set_pressure_unit(ATMOS_PRESSURE_MMHG);ok=ok && fabsf(shown(6,1013.25f)-760.0f)<.1f;
+        atmos_set_pressure_unit(ATMOS_PRESSURE_KPA);ok=ok && fabsf(shown(6,1013.25f)-101.325f)<.01f;
+        atmos_set_temperature_unit(7);atmos_set_pressure_unit(-1); /* ignored */
+        ok=ok && temp_unit==ATMOS_TEMP_F && pressure_unit==ATMOS_PRESSURE_KPA;
+        atmos_set_temperature_unit(ATMOS_TEMP_C);atmos_set_pressure_unit(ATMOS_PRESSURE_HPA);
+        if(!ok || shown(4,21.5f)!=21.5f)return 90;
+    }
     automatic=false;
     for(int i=0;i<80;i++)atmos_step(.025f);
     if(count!=1 || fabs(history[0].at-2)>.001f)return 2;
