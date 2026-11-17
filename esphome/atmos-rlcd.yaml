@@ -10,17 +10,11 @@ esphome:
           id: alert_player
           volume: !lambda "float v = id(alert_volume).state; return (v) <= 0.0f ? 0.0f : (191.0f + 0.6f * ((v) - 100.0f)) / 255.0f;"
       # Audio power-up, during the splash (the UI waits there for the connection):
-      # start the player and I2S with silence while the amplifier is still off, let
-      # the codec settle, then switch the amplifier on for good. The ES8311 pops
-      # when it starts with the amplifier live; timeout: never keeps it running.
-      - media_player.speaker.play_on_device_media_file:
-          id: alert_player
-          media_file: silence
-          announcement: true
-      - wait_until:
-          condition:
-            media_player.is_announcing: alert_player
-          timeout: 1s
+      # start the keep-alive source while the amplifier is still off, so the codec
+      # and I2S start (and pop) unheard, then switch the amplifier on for good.
+      - speaker.play:
+          id: keepalive_source
+          data: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
       - delay: 1s
       - switch.turn_on: speaker_amp
       - logger.log: "Audio ready: amplifier on"
@@ -190,6 +184,17 @@ speaker:
     buffer_duration: 100ms  # I2S DMA buffers live in internal RAM, beside the frame buffers
     # Keep I2S clocked between sounds: restarting it pops through the amplifier.
     timeout: never
+  # Every sound ends with finish(), which tears I2S down whatever its timeout says.
+  # The mixer keeps its output running while any source runs, so keepalive_source
+  # (started at boot, never finished, no data) holds I2S and the codec on; the
+  # sounds play through alert_source.
+  - platform: mixer
+    id: audio_mixer
+    output_speaker: i2s_speaker
+    source_speakers:
+      - id: alert_source
+      - id: keepalive_source
+        timeout: never
 
 # Plays the embedded sounds (esphome/sounds/, 16-bit mono 16 kHz WAV; see
 # prepare_sound.py). Internal: Home Assistant gets the Alert volume number instead.
@@ -198,15 +203,13 @@ media_player:
     id: alert_player
     internal: true
     announcement_pipeline:
-      speaker: i2s_speaker
+      speaker: alert_source
       format: WAV
       sample_rate: 16000
       num_channels: 1
     files:
       - id: alert_sound
         file: sounds/alert.wav
-      - id: silence
-        file: sounds/silence.wav
 
 # The bell: play, and retry once if the player did not start announcing.
 # restart: a new request (e.g. dragging the volume) replaces one in progress.
