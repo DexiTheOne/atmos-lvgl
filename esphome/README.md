@@ -299,3 +299,35 @@ The component no longer spins the main loop (`HighFrequencyLoopRequester` is gon
 - At 20 fps pacing is even: only ribbons swell (about 64 ms) and pre-render steps run over, and about a quarter of the CPU is left for Wi-Fi, the API and sensors.
 - At 17 fps (the default) only pre-render steps run over, and about a third to two-fifths of the CPU is left.
 - `--hw-pace` in the simulator now holds every frame for at least 59 ms.
+
+## Status LEDs (atmos_led)
+
+`atmos_led` colours an addressable LED strip with the rating on screen. Configure the
+strip with any ESPHome addressable light platform (type, count and pin live there),
+then point `atmos_led` at it:
+
+```yaml
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_leds
+    name: Status LEDs      # Home Assistant: power and brightness
+    chipset: WS2812
+    rgb_order: GRB
+    pin: GPIO1
+    num_leds: 4
+
+atmos_led:
+  light_id: status_leds
+  fade_time: 500ms         # cross-fade when a rating changes on a still page
+
+atmos:
+  ratings:
+    co2:
+      - {max: 800, text: Good, led_color: "#00FF00"}
+      - {min: 800, text: Poor, led_color: "#FF0000"}
+```
+
+Bands without `led_color` use green (level 0), amber (1) or red (2+). Page transitions
+fade the LEDs out over the first half of the display's transition and into the next
+page's colour over the second. The light's colour and effects in Home Assistant are
+ignored; its power and brightness apply.

@@ -106,4 +106,12 @@ float atmos_compose_ms(void);
 int atmos_destination(void);
 /* Scene rasterised by a hold-time pre-render during the latest atmos_step(), or -1. */
 int atmos_step_prerendered(void);
+/* Status LEDs. Transition progress 0..1 while moving, else -1. The reading whose
+   rating a scene shows (its underlined reading; the overview's worst-rated one), or -1.
+   The index of the band holding a reading's value in its atmos_set_bands() list and
+   that band's level, or -1 when it has no rating. */
+float atmos_transition_progress(void);
+int atmos_led_reading(int scene);
+int atmos_band_index(int reading);
+int atmos_band_level(int reading);
 #endif

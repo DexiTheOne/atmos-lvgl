@@ -2263,6 +2263,26 @@ const char *atmos_overrun_detail(void){return overrun_detail;}
 void atmos_set_clock(uint32_t (*us)(void)){clock_us=us;}
 float atmos_compose_ms(void){return compose_count?compose_us_total/1000.0f/compose_count:0;}
 int atmos_destination(void){return destination;}
+float atmos_transition_progress(void){return moving?clamp((float)(movement/duration),0,1):-1.0f;}
+int atmos_band_index(int r){
+    if(r<0 || r>=ATMOS_READINGS)return -1;
+    rating b=rate(r);return b?(int)(b-bands[r].band):-1;
+}
+int atmos_band_level(int r){
+    if(r<0 || r>=ATMOS_READINGS)return -1;
+    rating b=rate(r);return b?b->level:-1;
+}
+int atmos_led_reading(int s){
+    if(s<0 || s>=ATMOS_SCENES)return -1;
+    if(s==0){
+        int worst=-1;
+        for(int r=0;r<ATMOS_READINGS;r++){int l=atmos_band_level(r);if(l>=0 && (worst<0 || l>atmos_band_level(worst)))worst=r;}
+        return worst;
+    }
+    int item=auto_selected(s);
+    for(int r=0;r<ATMOS_READINGS;r++)if(reading_scene[r]==s && reading_item[r]==item)return r;
+    return -1;
+}
 int atmos_step_prerendered(void){return prerendered_last_step;}
 int atmos_self_test(void){
     if(count!=0)return 1;

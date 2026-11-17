@@ -109,16 +109,35 @@ atmos:
   # co2, voc, nox, formaldehyde, pm1, pm2_5, pm4, pm10, temperature, humidity, pressure.
   ratings:
     co2:
-      - {max: 800, text: Good}
-      - {min: 800, max: 1200, text: Fair}
-      - {min: 1200, max: 2000, text: Poor}
-      - {min: 2000, text: Terrible, level: 3}
+      - {max: 800, text: Good, led_color: "#00FF00"}
+      - {min: 800, max: 1200, text: Fair, led_color: "#FFB000"}
+      - {min: 1200, max: 2000, text: Poor, led_color: "#FF0000"}
+      - {min: 2000, text: Terrible, level: 3, led_color: "#B000FF"}
     temperature:
       - {min: 20, max: 25, text: Good, level: 0}
       - {max: 18, text: Cold, level: 2}
       - {max: 20, text: Cool, level: 1}
       - {max: 27, text: Warm, level: 1}
       - {text: Hot, level: 2}
+  # led_color (#RRGGBB) per band sets the status LEDs' colour; without it: level 0
+  # green, 1 amber, 2+ red.
+
+# Status LEDs: 4 WS2812B on GPIO1. The light entity gives Home Assistant power and
+# brightness; atmos_led sets the colour from the rating on screen, fading out and in
+# with each page transition.
+light:
+  - platform: esp32_rmt_led_strip
+    id: status_leds
+    name: Status LEDs
+    chipset: WS2812
+    rgb_order: GRB
+    pin: GPIO1
+    num_leds: 4
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 300ms
+
+atmos_led:
+  light_id: status_leds
 
 # The board's two keys (active low). No touch, so they step the underlined reading
 # within a page, then move to the neighbouring page. GPIO0 is also the boot

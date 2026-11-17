@@ -11,6 +11,9 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/core/preferences.h"
 #include "lvgl.h"
+extern "C" {
+#include "../../../atmos_ui/atmos.h"  // copied from desktop/ by __init__.py
+}
 
 namespace esphome::atmos {
 
@@ -61,6 +64,12 @@ class AtmosComponent : public Component {
   void set_history_window(float seconds);
   /* Rating band for a reading (atmos_band); bands for a reading are applied in order. */
   void add_band(int reading, float min, float max, int level, const char *text, bool alert);
+  /* Status LED colour (0xRRGGBB) of a reading's band, by its position in add_band() order. */
+  void set_band_color(int reading, int band, uint32_t rgb);
+  /* Colour of the band holding a reading's value: its led_color, else by level (0 green,
+     1 amber, 2+ red); 0 (off) for a reading without a rating. */
+  uint32_t led_color(int reading) const;
+  bool started() const { return this->started_; }
   /* Link a sensor to a reading (ATMOS_CO2 ...). Linking any replaces the demo data. */
   void set_sensor(int reading, sensor::Sensor *s);
   void set_startup_delay(int reading, bool on);
@@ -122,6 +131,8 @@ class AtmosComponent : public Component {
   bool adopt_{false};
   bool auto_{true};
   void publish_selection_();
+  int32_t band_colors_[ATMOS_READINGS][ATMOS_BANDS_MAX];
+  bool band_colors_set_{false};
   float values_[16];  // latest value per reading, NAN until reported
   bool has_sensors_{false}, values_dirty_{false};
   void push_readings_();

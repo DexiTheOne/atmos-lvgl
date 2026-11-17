@@ -49,6 +49,18 @@ CONF_RATINGS = "ratings"
 CONF_SENSORS = "sensors"
 CONF_SENSOR = "sensor"
 CONF_STARTUP_DELAY = "startup_delay"
+CONF_LED_COLOR = "led_color"
+
+
+def _rgb(value):
+    """A status LED colour: "#RRGGBB" (or "RRGGBB")."""
+    value = cv.string_strict(value).strip().lstrip("#")
+    if len(value) != 6:
+        raise cv.Invalid("led_color must be #RRGGBB")
+    try:
+        return int(value, 16)
+    except ValueError as err:
+        raise cv.Invalid("led_color must be #RRGGBB") from err
 
 # Readings in page order, as atmos.h numbers them (ATMOS_CO2 ...): YAML key, select option.
 READINGS = (
@@ -153,6 +165,9 @@ BAND_SCHEMA = cv.All(
             cv.Required(CONF_TEXT): cv.All(cv.string_strict, cv.Length(min=1, max=BAND_TEXT_MAX)),
             cv.Optional(CONF_LEVEL): cv.int_range(min=0, max=100),
             cv.Optional(CONF_ALERT): cv.boolean,
+            # Status LED colour (atmos_led) while this band is shown; default by level:
+            # 0 green, 1 amber, 2+ red. "#000000" turns the LEDs off.
+            cv.Optional(CONF_LED_COLOR): _rgb,
         }
     ),
 )
@@ -246,7 +261,9 @@ async def to_code(config):
                 cg.add(var.set_startup_delay(index, True))
     nan = cg.RawExpression("NAN")
     for index, (key, _) in enumerate(READINGS):
-        for band in config[CONF_RATINGS].get(key, []):
+        for position, band in enumerate(config[CONF_RATINGS].get(key, [])):
+            if CONF_LED_COLOR in band:
+                cg.add(var.set_band_color(index, position, band[CONF_LED_COLOR]))
             lo, hi = band.get(CONF_MIN_VALUE), band.get(CONF_MAX_VALUE)
             cg.add(var.add_band(index, nan if lo is None else lo, nan if hi is None else hi, band[CONF_LEVEL], band[CONF_TEXT], band[CONF_ALERT]))
     if conf := config.get(CONF_READING_SELECT):
@@ -261,7 +278,6 @@ async def to_code(config):
     if conf := config.get(CONF_ALERT_FOCUS):
         sw = await switch.new_switch(conf)
         await cg.register_component(sw, conf)
-        await cg.register_parented(sw, var)
     if conf := config.get(CONF_ALERT_ACTIVE):
         cg.add(var.set_alert_sensor(await binary_sensor.new_binary_sensor(conf)))
     for key, history, scale, step in ((CONF_HOLD_TIME, False, 1.0, 0.5), (CONF_HISTORY_TIME, True, 60.0, 1.0)):

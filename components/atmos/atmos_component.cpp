@@ -12,9 +12,6 @@
 #endif
 #include <esp_heap_caps.h>
 
-extern "C" {
-#include "../../../atmos_ui/atmos.h"  // copied from desktop/ by __init__.py
-}
 
 namespace esphome::atmos {
 
@@ -273,6 +270,26 @@ void AtmosNumber::control(float value) {
     this->parent_->set_hold(value * this->scale_);
   this->pref_.save(&value);
   this->publish_state(value);
+}
+
+void AtmosComponent::set_band_color(int reading, int band, uint32_t rgb) {
+  if (!this->band_colors_set_) {
+    for (auto &row : this->band_colors_)
+      for (auto &c : row)
+        c = -1;
+    this->band_colors_set_ = true;
+  }
+  if (reading >= 0 && reading < ATMOS_READINGS && band >= 0 && band < ATMOS_BANDS_MAX)
+    this->band_colors_[reading][band] = (int32_t) (rgb & 0xFFFFFF);
+}
+
+uint32_t AtmosComponent::led_color(int reading) const {
+  int band = atmos_band_index(reading), level = atmos_band_level(reading);
+  if (band < 0)
+    return 0;
+  if (this->band_colors_set_ && this->band_colors_[reading][band] >= 0)
+    return (uint32_t) this->band_colors_[reading][band];
+  return level <= 0 ? 0x00FF00 : level == 1 ? 0xFF9000 : 0xFF0000;
 }
 
 void AtmosComponent::dump_config() {
