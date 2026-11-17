@@ -175,10 +175,12 @@ static float band_start(int r,int level,float fallback){
     for(int i=0;i<bands[r].n;i++)if(bands[r].band[i].level>=level && isfinite(bands[r].band[i].min))lo=fminf(lo,bands[r].band[i].min);
     return isfinite(lo)?lo:fallback;
 }
+static void update_alerts(void);
 bool atmos_set_bands(int reading,const atmos_band *band,int n){
     if(reading<0 || reading>=ATMOS_READINGS || n<0 || n>ATMOS_BANDS_MAX || (n && !band))return false;
     for(int i=0;i<n;i++){bands[reading].band[i]=band[i];bands[reading].band[i].text[ATMOS_BAND_TEXT-1]=0;}
     bands[reading].n=n;full_dirty=true;data_version++;
+    update_alerts();
     return true;
 }
 static rating rate_co2(void){return rate(ATMOS_CO2);}
@@ -190,6 +192,27 @@ static rating rate_overall(void){
 }
 static bool alerting(int r){rating b=rate(r);return b && b->alert;}
 static bool warning(void){for(int i=0;i<ATMOS_READINGS;i++)if(alerting(i))return true;return false;}
+/* Alert hysteresis (atmos_set_alert_times()): a reading joins the debounced alert set
+   after alerting continuously for alert_enter seconds and leaves it after
+   alert_leave seconds clear, in active time. The focus cycle, atmos_alert_active()
+   and the sound events use the debounced set; badges and the overview use the raw band. */
+static float alert_enter=60.0f,alert_leave=180.0f,alert_cooldown=1200.0f;
+static bool alert_on[ATMOS_READINGS];
+static double alert_since[ATMOS_READINGS]; /* when the raw state last differed from alert_on */
+static void update_alerts(void){
+    for(int r=0;r<ATMOS_READINGS;r++){
+        bool raw=alerting(r);
+        if(raw==alert_on[r]){alert_since[r]=t;continue;}
+        if(t-alert_since[r]+1e-6>=(raw?alert_enter:alert_leave)){alert_on[r]=raw;alert_since[r]=t;}
+    }
+}
+static bool any_alert(void){for(int r=0;r<ATMOS_READINGS;r++)if(alert_on[r])return true;return false;}
+/* Sound events, raised where automatic cycling enters or leaves the alert-focus
+   cycle (a transition's start, or a page that alone alerts restarting its hold). */
+static bool alert_sound,cycle_alerting;
+static double alert_cleared_at=-1e9;
+static int events[4],event_head,event_count;
+static void push_event(int e){if(event_count<4){events[(event_head+event_count)%4]=e;event_count++;}}
 static lv_color_t color(bool reverse){return lv_color_hex(reverse?UI_COLOR_PAPER:UI_COLOR_INK);}
 
 /* Direct fills whose clip area extended past the layer buffer (diagnostic). */
@@ -1892,6 +1915,11 @@ static lv_area_t animated_area(int which){
     }
 }
 static void invalidate_frame(void){
+    /* Dust specks are admitted as pm_density crosses j+0.5, possibly between drift
+       ticks: a change in their number redraws the field like a new tick. */
+    static int pm_last_admitted=-1;
+    int admitted=(int)floorf(pm_density+.5f);
+    if(admitted!=pm_last_admitted){pm_last_admitted=admitted;pm_last_tick=INT64_MIN;}
     /* The Particles selection blend (card fill and chart) stays below the field. */
     bool pm_lower=scene==2 && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME);
     if(moving || full_dirty || (!pm_lower && (pm_blend_age<UI_PM_TRANSITION_TIME ||
@@ -2029,6 +2057,8 @@ void atmos_init(void){
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
     sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=CYCLE_FIRST;queued=-1;pending_advance=0;hold_items=0;
+    memset(alert_on,0,sizeof alert_on);for(int r=0;r<ATMOS_READINGS;r++)alert_since[r]=t;
+    cycle_alerting=false;event_count=0;
     pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=chart_rise_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;underline_age=UI_UNDERLINE_TIME;underline_from=-1;underline_from_end=1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
     gas_intensity[0]=gas_level(0);gas_intensity[1]=gas_level(1);
     for(int j=0;j<UI_HCHO_MOLECULES;j++)hcho_grow[j]=j<hcho_target()?1:0;
@@ -2078,7 +2108,7 @@ static const int8_t reading_item[ATMOS_READINGS]={0,0,1,0,0,1,2,3,0,1,2};
 /* Alert focus: the items of page s whose readings alert, as a bit mask. */
 static unsigned alert_mask(int s){
     unsigned m=0;
-    for(int r=0;r<ATMOS_READINGS;r++)if(reading_scene[r]==s && alerting(r))m|=1u<<reading_item[r];
+    for(int r=0;r<ATMOS_READINGS;r++)if(reading_scene[r]==s && alert_on[r])m|=1u<<reading_item[r];
     return m;
 }
 static bool focus_active(void){
@@ -2102,6 +2132,19 @@ static int auto_next(int from){
 /* Set the next page to the reading it arrives on, before its snapshot is pre-rendered. */
 static void prepare_next(int to){if(to!=scene)auto_select(to,lowest_item(page_items(to)));}
 static void start_hold(void){age=0;hold_items=page_items(scene);}
+/* Called where automatic cycling decides its next page: a change between the normal
+   and the alert-focus cycle raises a sound event (with alert sounds on). Turning
+   focus off resets silently; ALERT_START is held back for alert_cooldown seconds
+   after an ALERT_CLEAR. */
+static void announce_cycle(void){
+    if(!alert_focus){cycle_alerting=false;return;}
+    bool now=focus_active();
+    if(now==cycle_alerting)return;
+    cycle_alerting=now;
+    if(!alert_sound)return;
+    if(!now){push_event(ATMOS_EVT_ALERT_CLEAR);alert_cleared_at=t;}
+    else if(t-alert_cleared_at>=alert_cooldown)push_event(ATMOS_EVT_ALERT_START);
+}
 static float transition_duration(int from,int to){
     (void)to;
     static const float seconds[ATMOS_SCENES]={1.4f,1.4f,1.5f,1.3f,1.6f,1.4f};
@@ -2146,6 +2189,7 @@ void atmos_step(double dt){
     hcho_grow_step(dt);
     if(t+1e-7f>=next_sample){take_sample();next_sample+=sample_every();}
     prune_history();
+    update_alerts();
     if(moving){
         movement+=dt;
         if(movement>=duration){
@@ -2167,6 +2211,7 @@ void atmos_step(double dt){
         }
         prerender_step();
         if(automatic && age>=hold){
+            announce_cycle();
             int to=auto_next(scene);
             /* A page that alone alerts starts another hold on its first alerting reading. */
             if(to==scene){start_hold();auto_select(scene,lowest_item(hold_items));}
@@ -2217,7 +2262,7 @@ void atmos_set_startup_delay(int reading,bool on){
     if(reading<0 || reading>=ATMOS_READINGS)return;
     startup_delay[key[reading]]=on;reading_delayed[reading]=on;full_dirty=true;data_version++;
 }
-void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;}
+void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;update_alerts();}
 void atmos_set_wifi(int bars){
     bars=bars<0?-1:bars>3?3:bars;
     if(bars==wifi_bars)return;
@@ -2228,9 +2273,22 @@ int atmos_wifi_bars(float dbm){return isnan(dbm)?-1:dbm>=-60.0f?3:dbm>=-70.0f?2:
 void atmos_toggle_pause(void){paused=!paused;}
 void atmos_toggle_auto(void){automatic=!automatic;}
 void atmos_set_auto(bool on){automatic=on;}
-void atmos_set_alert_focus(bool on){alert_focus=on;}
+void atmos_set_alert_focus(bool on){alert_focus=on;if(!on)cycle_alerting=false;}
 bool atmos_alert_focus(void){return alert_focus;}
-bool atmos_alert_active(void){return warning();}
+bool atmos_alert_active(void){return any_alert();}
+bool atmos_alert_raw(void){return warning();}
+void atmos_set_alert_sound(bool on){alert_sound=on;}
+bool atmos_alert_sound(void){return alert_sound;}
+void atmos_set_alert_times(float enter,float leave){
+    if(isfinite(enter))alert_enter=clamp(enter,0,ATMOS_ALERT_TIME_MAX);
+    if(isfinite(leave))alert_leave=clamp(leave,0,ATMOS_ALERT_TIME_MAX);
+    update_alerts();
+}
+void atmos_set_alert_sound_cooldown(float seconds){if(isfinite(seconds))alert_cooldown=clamp(seconds,0,ATMOS_ALERT_TIME_MAX);}
+int atmos_poll_event(void){
+    if(!event_count)return ATMOS_EVT_NONE;
+    int e=events[event_head];event_head=(event_head+1)%4;event_count--;return e;
+}
 bool atmos_auto(void){return automatic;}
 void atmos_set_hold(float seconds){if(!isnan(seconds))hold=clamp(seconds,ATMOS_HOLD_MIN,ATMOS_HOLD_MAX);}
 float atmos_hold(void){return hold;}
@@ -2396,6 +2454,8 @@ int atmos_self_test(void){
            page for the hold, and returns to them after a manual visit. */
         atmos_readings saved_sensor=sensor;bool saved_external=external_data;
         atmos_readings calm={410,5,50,1,22,45,3,6,10,1013.2f,10},v;
+        float saved_enter=alert_enter,saved_leave=alert_leave;
+        atmos_set_alert_times(0,0);
         automatic=true;alert_focus=true;
         #define SETTLE() do{for(int i=0;i<400 && moving;i++)atmos_step(.025f);}while(0)
         #define HOLD_END() do{for(int i=0;i<400 && !moving && age+.025f<hold;i++)atmos_step(.025f);}while(0)
@@ -2440,11 +2500,55 @@ int atmos_self_test(void){
         if(!warning() || alert_mask(1)!=1)return 51;
         atmos_set_bands(ATMOS_CO2,saved,saved_n);
         if(warning())return 52;
+        /* Hysteresis: a reading flickering across its threshold never joins the set. */
+        atmos_set_readings(calm);atmos_set_alert_times(1,3);atmos_set_alert_sound_cooldown(0);
+        alert_sound=true;cycle_alerting=false;event_count=0;
+        for(int i=0;i<400;i++){v=calm;v.co2=(i/16)%2?1500:410;atmos_set_readings(v);atmos_step(.025f);
+            if(atmos_alert_active() || atmos_poll_event())return 53;}
+        /* Sustained: joins after `enter`; ALERT_START fires with the transition into the
+           focus cycle (or a re-hold of the alerting page), exactly once. */
+        v=calm;v.co2=1500;atmos_set_readings(v);
+        for(int i=0;i<39;i++)atmos_step(.025f);
+        if(atmos_alert_active())return 54;
+        atmos_step(.025f);atmos_step(.025f);if(!atmos_alert_active())return 54;
+        int starts=0,clears=0;
+        for(int i=0;i<2000 && !starts;i++){
+            bool was=moving;atmos_step(.025f);int e=atmos_poll_event();
+            if(e==ATMOS_EVT_ALERT_START){starts++;if(!(moving && !was) && !(scene==1 && age<.03f))return 55;}
+            else if(e)return 55;
+        }
+        if(starts!=1)return 55;
+        SETTLE();
+        for(int i=0;i<2000;i++){atmos_step(.025f);if(atmos_poll_event())return 56;}
+        /* Clearing: leaves after `leave`, then ALERT_CLEAR at the next hold end. */
+        atmos_set_readings(calm);
+        for(int i=0;i<4000 && !clears;i++){
+            bool was=moving;atmos_step(.025f);int e=atmos_poll_event();
+            if(e==ATMOS_EVT_ALERT_CLEAR){clears++;if(atmos_alert_active() || (!(moving && !was) && age>.03f))return 57;}
+            else if(e)return 57;
+        }
+        if(clears!=1)return 57;
+        /* Cooldown: a new alert soon after the clear changes the cycle silently. */
+        atmos_set_alert_sound_cooldown(600);
+        v=calm;v.co2=1500;atmos_set_readings(v);
+        for(int i=0;i<4000;i++){atmos_step(.025f);if(atmos_poll_event())return 58;}
+        if(!cycle_alerting)return 58;
+        /* Focus off resets silently; sounds off never raise events. */
+        atmos_set_alert_focus(false);atmos_set_readings(calm);
+        for(int i=0;i<4000;i++){atmos_step(.025f);if(atmos_poll_event())return 59;}
+        atmos_set_alert_focus(true);alert_sound=false;atmos_set_alert_sound_cooldown(0);
+        atmos_set_readings(v);
+        for(int i=0;i<4000;i++){atmos_step(.025f);if(atmos_poll_event())return 59;}
+        SETTLE();
+        atmos_set_alert_focus(false);atmos_set_readings(calm);atmos_set_alert_times(0,0);
+        atmos_set_alert_times(saved_enter,saved_leave);atmos_set_alert_sound_cooldown(1200);
+        alert_sound=cycle_alerting=false;event_count=0;
         #undef SETTLE
         #undef HOLD_END
         alert_focus=automatic=false;sensor=saved_sensor;external_data=saved_external;full_dirty=true;data_version++;
     }
     puts("Alert focus: single page, in-page stepping, two-page alternation, return after a manual visit, full hold on clearing and alert-flagged bands passed.");
+    puts("Alert hysteresis and sounds: flicker ignored, START/CLEAR once at the cycle change, cooldown, focus off and sounds off silent passed.");
     puts("Controls: reading selection, hold bound, history span shrink/grow, fast fill of long spans and rating bands passed.");
     puts("Prerender: hold-time transition snapshots match fresh renders and are used.");
     puts("PM: independent history channels, rapid selection, fixed transition window and missing-sample gaps passed.");

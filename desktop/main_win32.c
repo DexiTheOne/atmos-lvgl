@@ -1,5 +1,6 @@
 ﻿#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <mmsystem.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -151,7 +152,8 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key==VK_TAB || key==VK_OEM_6)atmos_cycle_pm(1);
         else if(key==VK_OEM_4)atmos_cycle_pm(-1);
         else if(key=='A')atmos_toggle_auto();
-        else if(key=='P')atmos_set_alert_focus(!atmos_alert_focus());
+        else if(key=='P'){atmos_set_alert_focus(!atmos_alert_focus());update_title();}
+        else if(key=='M'){atmos_set_alert_sound(!atmos_alert_sound());update_title();}
         else if(key=='W')atmos_set_wifi(atmos_wifi()<=-1?3:atmos_wifi()-1); /* 3, 2, 1, 0, off */
         else if(key=='H'){hw_pace=!hw_pace;update_title();}
         else if(key=='S')save_bmp("atmos-frame.bmp");
@@ -200,15 +202,25 @@ static bool parse_rgb(const char *text,uint32_t *out){
     if(end-text!=6 || *end)return false;
     *out=(uint32_t)value;return true;
 }
+/* Alert sounds: the device plays its media files; the simulator plays the same alert
+   WAV (resource 1). There is no clear sound yet, so ALERT_CLEAR is only logged. */
+static void play_alert_events(void){
+    for(int e;(e=atmos_poll_event())!=ATMOS_EVT_NONE;){
+        if(e==ATMOS_EVT_ALERT_START){puts("Alert sound: start");PlaySoundA(MAKEINTRESOURCEA(1),GetModuleHandle(NULL),SND_RESOURCE|SND_ASYNC|SND_NODEFAULT);}
+        else puts("Alert sound: clear (no sound yet)");
+        fflush(stdout);
+    }
+}
 static void update_title(void){
     if(!window)return;
     char title[200];
-    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | W wifi | H hw pace | S save | R reboot",
-        hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"");
+    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | P alert focus%s | M sound%s | W wifi | H hw pace | S save | R reboot",
+        hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"",atmos_alert_focus()?" ON":"",atmos_alert_sound()?" ON":"");
     SetWindowText(window,title);
 }
 int main(int argc,char **argv){
     parse_rgb(getenv("ATMOS_INK"),&ink_rgb);parse_rgb(getenv("ATMOS_PAPER"),&paper_rgb);
+    atmos_set_alert_sound(true); /* The simulator starts with alert sounds on (they need alert focus, key P). */
     /* Colour options may appear anywhere; the remaining argument selects the mode. */
     int kept=1,wifi=3; /* The simulator starts connected; W steps the strength down. */
     for(int i=1;i<argc;i++){
@@ -216,6 +228,10 @@ int main(int argc,char **argv){
         else if(strcmp(argv[i],"--hw-pace")==0)hw_pace=true;
         else if(strncmp(argv[i],"--boot=",7)==0)boot_ms=atof(argv[i]+7);
         else if(strncmp(argv[i],"--wifi=",7)==0)wifi=atoi(argv[i]+7);
+        else if(strncmp(argv[i],"--alert-enter=",14)==0)atmos_set_alert_times((float)atof(argv[i]+14),NAN);
+        else if(strncmp(argv[i],"--alert-leave=",14)==0)atmos_set_alert_times(NAN,(float)atof(argv[i]+14));
+        else if(strncmp(argv[i],"--alert-cooldown=",17)==0)atmos_set_alert_sound_cooldown((float)atof(argv[i]+17));
+        else if(strcmp(argv[i],"--alert-focus")==0)atmos_set_alert_focus(true);
         else if(strncmp(argv[i],"--paper=",8)==0){if(!parse_rgb(argv[i]+8,&paper_rgb)){fprintf(stderr,"Bad --paper\n");return 2;}}
         else argv[kept++]=argv[i];
     }
@@ -542,6 +558,7 @@ int main(int argc,char **argv){
             atmos_init();ui_started=true;continue;
         }
         atmos_step(elapsed/1000.0);
+        play_alert_events();
         if(!hw_pace){lv_timer_handler();Sleep(2);continue;}
         /* One device frame: step, render, then hold for the device's cost of that frame
            (never less than the device's 59 ms frame period, its 17 fps cap). */

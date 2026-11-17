@@ -57,6 +57,14 @@ class AtmosComponent : public Component {
   void set_reading_select(AtmosReadingSelect *s) { this->reading_select_ = s; }
   void set_auto_switch(AtmosAutoSwitch *s) { this->auto_switch_ = s; }
   void set_alert_sensor(binary_sensor::BinarySensor *s) { this->alert_sensor_ = s; }
+  /* Alert hysteresis and sound cooldown (atmos_set_alert_times(), seconds). */
+  void set_alert_times(float enter, float leave, float cooldown) {
+    atmos_set_alert_times(enter, leave);
+    atmos_set_alert_sound_cooldown(cooldown);
+  }
+  /* on_alert_start / on_alert_clear: fired at the transition into / out of the alert-focus cycle. */
+  Trigger<> *get_alert_start_trigger() { return &this->alert_start_trigger_; }
+  Trigger<> *get_alert_clear_trigger() { return &this->alert_clear_trigger_; }
   /* Select option: 0 "Auto advance" (turns cycling on), else reading option - 1. */
   void select_option(int option);
   void set_auto(bool on);
@@ -122,6 +130,7 @@ class AtmosComponent : public Component {
   AtmosReadingSelect *reading_select_{nullptr};
   AtmosAutoSwitch *auto_switch_{nullptr};
   binary_sensor::BinarySensor *alert_sensor_{nullptr};
+  Trigger<> alert_start_trigger_, alert_clear_trigger_;
   int pending_reading_{-1}, published_option_{-1};
   // While cycling, the select shows a reading only while the reading chosen by the
   // select or a key (manual_) is on screen, otherwise "Auto advance", so cycling
@@ -154,15 +163,18 @@ class AtmosAutoSwitch : public switch_::Switch, public Component, public Parente
   void write_state(bool state) override;
 };
 
-/* Alert focus: while any reading alerts, automatic cycling shows only alerting readings.
-   A model setting atmos_init() keeps, so it applies before the UI starts. */
+/* Alert focus (while any reading alerts, automatic cycling shows only alerting readings),
+   or with set_sound(true) alert sounds (the on_alert_start/on_alert_clear triggers; they
+   need alert focus). Model settings atmos_init() keeps, so they apply before the UI starts. */
 class AtmosAlertSwitch : public switch_::Switch, public Component {
  public:
+  void set_sound(bool sound) { this->sound_ = sound; }
   void setup() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }
 
  protected:
   void write_state(bool state) override;
+  bool sound_{false};
 };
 
 /* Page hold or history span, in the entity's unit (scale = seconds per unit). Restored

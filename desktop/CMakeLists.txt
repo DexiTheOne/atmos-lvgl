@@ -10,8 +10,14 @@ file(GLOB_RECURSE LVGL_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ve
 add_library(lvgl STATIC ${LVGL_SOURCES})
 target_include_directories(lvgl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/lvgl" "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
-add_executable(atmos main_win32.c atmos.c ui_fonts.c)
-target_link_libraries(atmos PRIVATE lvgl gdi32 user32 m)
+# Alert sound embedded as a WAVE resource (the same file the device firmware plays).
+enable_language(RC)
+set(ATMOS_ALERT_WAV "${CMAKE_CURRENT_SOURCE_DIR}/../esphome/sounds/alert.wav")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sounds.rc" "1 WAVE \"${ATMOS_ALERT_WAV}\"
+")
+set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/sounds.rc" PROPERTIES OBJECT_DEPENDS "${ATMOS_ALERT_WAV}")
+add_executable(atmos main_win32.c atmos.c ui_fonts.c "${CMAKE_CURRENT_BINARY_DIR}/sounds.rc")
+target_link_libraries(atmos PRIVATE lvgl gdi32 user32 winmm m)
 target_compile_options(atmos PRIVATE -Wall -Wextra -Werror)
 enable_testing()
 add_test(NAME native_render COMMAND atmos --self-test)

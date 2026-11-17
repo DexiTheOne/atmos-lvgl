@@ -64,8 +64,25 @@ bool atmos_auto(void);
    navigation is unaffected; cycling returns to the alerts after one hold. */
 void atmos_set_alert_focus(bool on);
 bool atmos_alert_focus(void);
-/* True while any reading's band has alert set. */
+/* True while the debounced alert set (see atmos_set_alert_times()) is non-empty. */
 bool atmos_alert_active(void);
+/* True while any reading's band has alert set right now (no hysteresis). */
+bool atmos_alert_raw(void);
+/* Alert hysteresis, in active seconds, for every reading: a reading joins the alert
+   set after alerting continuously for `enter` and leaves it after `leave` clear
+   (defaults 60 and 180; NAN keeps a value). The focus cycle, atmos_alert_active()
+   and the sound events use this set; badges and the overview warning do not. */
+#define ATMOS_ALERT_TIME_MAX 86400.0f
+void atmos_set_alert_times(float enter, float leave);
+/* Alert sounds (needs alert focus): events raised where automatic cycling enters the
+   alert-focus cycle (ALERT_START, at that transition's start) or returns to the
+   normal cycle (ALERT_CLEAR). ALERT_START is skipped for the cooldown (default
+   1200 s) after an ALERT_CLEAR. Poll after atmos_step(); ATMOS_EVT_NONE when empty. */
+enum { ATMOS_EVT_NONE, ATMOS_EVT_ALERT_START, ATMOS_EVT_ALERT_CLEAR };
+void atmos_set_alert_sound(bool on);
+bool atmos_alert_sound(void);
+void atmos_set_alert_sound_cooldown(float seconds);
+int atmos_poll_event(void);
 /* Seconds each page (split between its readings) is held before automatic cycling moves on. */
 #define ATMOS_HOLD_MIN 2.0f
 #define ATMOS_HOLD_MAX 600.0f

@@ -44,6 +44,12 @@ CONF_HOLD_TIME = "hold_time"
 CONF_ALERT = "alert"
 CONF_ALERT_FOCUS = "alert_focus"
 CONF_ALERT_ACTIVE = "alert_active"
+CONF_ALERT_SOUND = "alert_sound"
+CONF_ALERT_ENTER = "alert_enter"
+CONF_ALERT_LEAVE = "alert_leave"
+CONF_ALERT_SOUND_COOLDOWN = "alert_sound_cooldown"
+CONF_ON_ALERT_START = "on_alert_start"
+CONF_ON_ALERT_CLEAR = "on_alert_clear"
 CONF_HISTORY_TIME = "history_time"
 CONF_RATINGS = "ratings"
 CONF_SENSORS = "sensors"
@@ -209,7 +215,29 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_CONFIG,
             icon="mdi:alert-circle-outline",
         ).extend(cv.COMPONENT_SCHEMA),
-        # On while any reading's band has alert set.
+        # Alert sounds: fire on_alert_start / on_alert_clear where automatic cycling
+        # enters / leaves the alert-focus cycle. Needs alert focus on.
+        cv.Optional(CONF_ALERT_SOUND): switch.switch_schema(
+            AtmosAlertSwitch,
+            default_restore_mode="RESTORE_DEFAULT_OFF",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon="mdi:bell-ring-outline",
+        ).extend(cv.COMPONENT_SCHEMA),
+        # Alert hysteresis for every reading: it joins the alert set after alerting this
+        # long, and leaves it after being clear this long. Badges show the raw rating.
+        cv.Optional(CONF_ALERT_ENTER, default="60s"): cv.All(
+            cv.positive_time_period_milliseconds, cv.Range(max=cv.TimePeriod(hours=24))
+        ),
+        cv.Optional(CONF_ALERT_LEAVE, default="3min"): cv.All(
+            cv.positive_time_period_milliseconds, cv.Range(max=cv.TimePeriod(hours=24))
+        ),
+        # After an alert clears, a new alert changes the cycle without a sound for this long.
+        cv.Optional(CONF_ALERT_SOUND_COOLDOWN, default="20min"): cv.All(
+            cv.positive_time_period_milliseconds, cv.Range(max=cv.TimePeriod(hours=24))
+        ),
+        cv.Optional(CONF_ON_ALERT_START): automation.validate_automation(single=True),
+        cv.Optional(CONF_ON_ALERT_CLEAR): automation.validate_automation(single=True),
+        # On while the debounced alert set (alert_enter/alert_leave) is non-empty.
         cv.Optional(CONF_ALERT_ACTIVE): binary_sensor.binary_sensor_schema(device_class="problem"),
         # Seconds each page is held before automatic cycling moves on.
         cv.Optional(CONF_HOLD_TIME): _number_schema(UNIT_SECOND, HOLD_LIMITS, 60.0, 6.5),
@@ -278,6 +306,18 @@ async def to_code(config):
     if conf := config.get(CONF_ALERT_FOCUS):
         sw = await switch.new_switch(conf)
         await cg.register_component(sw, conf)
+    if conf := config.get(CONF_ALERT_SOUND):
+        sw = await switch.new_switch(conf)
+        await cg.register_component(sw, conf)
+        cg.add(sw.set_sound(True))
+    cg.add(var.set_alert_times(
+        config[CONF_ALERT_ENTER].total_milliseconds / 1000.0,
+        config[CONF_ALERT_LEAVE].total_milliseconds / 1000.0,
+        config[CONF_ALERT_SOUND_COOLDOWN].total_milliseconds / 1000.0,
+    ))
+    for key, getter in ((CONF_ON_ALERT_START, var.get_alert_start_trigger()), (CONF_ON_ALERT_CLEAR, var.get_alert_clear_trigger())):
+        if conf := config.get(key):
+            await automation.build_automation(getter, [], conf)
     if conf := config.get(CONF_ALERT_ACTIVE):
         cg.add(var.set_alert_sensor(await binary_sensor.new_binary_sensor(conf)))
     for key, history, scale, step in ((CONF_HOLD_TIME, False, 1.0, 0.5), (CONF_HISTORY_TIME, True, 60.0, 1.0)):

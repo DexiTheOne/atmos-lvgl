@@ -249,7 +249,10 @@ void AtmosAlertSwitch::setup() {
 }
 
 void AtmosAlertSwitch::write_state(bool state) {
-  atmos_set_alert_focus(state);
+  if (this->sound_)
+    atmos_set_alert_sound(state);
+  else
+    atmos_set_alert_focus(state);
   this->publish_state(state);
 }
 
@@ -392,6 +395,10 @@ void AtmosComponent::frame_() {
   this->publish_selection_();
   if (this->alert_sensor_ != nullptr && this->started_)
     this->alert_sensor_->publish_state(atmos_alert_active());  // publishes only on change
+  for (int e; (e = atmos_poll_event()) != ATMOS_EVT_NONE;) {
+    ESP_LOGI(TAG, "Alert sound: %s", e == ATMOS_EVT_ALERT_START ? "start" : "clear");
+    (e == ATMOS_EVT_ALERT_START ? this->alert_start_trigger_ : this->alert_clear_trigger_).trigger();
+  }
   uint32_t publish_us = micros() - publish_start;
   // Stall finder: where a slow frame's time went (model step incl. pre-render, LVGL
   // refresh = render + convert + push, LVGL timers, select publish).

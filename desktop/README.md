@@ -26,6 +26,7 @@ Windows presentation composes the frame and letterboxing in an offscreen bitmap 
 | Space | Pause motion and history sampling |
 | A | Toggle automatic cycling |
 | P | Toggle alert focus: cycle only readings whose band alerts |
+| M | Toggle alert sounds (on at start): the bell plays where cycling enters the alert-focus cycle. `--alert-focus`, `--alert-enter=s`, `--alert-leave=s` (defaults 60/180 s), `--alert-cooldown=s` |
 | F1Ã¢â‚¬â€œF5 | Quiet morning, occupied room, cooking, open windows, sensor full scale |
 | S | Save native-resolution `atmos-frame.bmp` in the working directory |
 | R | Reboot the device: the UI is torn down and the boot splash shows again |

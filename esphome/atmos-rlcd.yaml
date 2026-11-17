@@ -3,6 +3,12 @@
 
 esphome:
   name: atmos-rlcd
+  on_boot:
+    priority: -100
+    then:
+      - media_player.volume_set:
+          id: alert_player
+          volume: !lambda "return id(alert_volume).state / 100.0f;"
   # Short build path: ESP-IDF object paths exceed Windows' 260-character limit
   # when long paths are disabled. Also set ESPHOME_ESP_IDF_PREFIX=C:\ESPHome\idf.
   build_path: C:/ESPHome/build/atmos-rlcd
@@ -75,7 +81,23 @@ atmos:
   # While any reading's band alerts, cycling shows only alerting readings (off by default).
   alert_focus:
     name: Alert focus
-  # On while any reading's band alerts.
+  # Alert sounds: the bell plays where cycling enters the alert-focus cycle (needs
+  # Alert focus). Readings join the alert set after alerting for alert_enter and
+  # leave it after alert_leave clear; badges still show the live rating.
+  alert_sound:
+    name: Alert sound
+  alert_enter: 60s
+  alert_leave: 3min
+  alert_sound_cooldown: 20min  # no repeat sound this soon after a clear
+  on_alert_start:
+    - switch.turn_on: speaker_amp
+    - delay: 20ms
+    - media_player.speaker.play_on_device_media_file:
+        id: alert_player
+        media_file: alert_sound
+        announcement: true
+  # on_alert_clear: no clear sound yet.
+  # On while the debounced alert set is non-empty.
   alert_active:
     name: Air quality alert
   # Seconds each page is held (split between its readings) before moving on.
@@ -121,6 +143,86 @@ atmos:
       - {text: Hot, level: 2}
   # led_color (#RRGGBB) per band sets the status LEDs' colour; without it: level 0
   # green, 1 amber, 2+ red.
+
+# Audio: ES8311 codec (I2C 0x18 for configuration, I2S for samples) and a speaker
+# amplifier enabled by GPIO46. Pins from Waveshare's ESPHome example for this board.
+# I2C runs at 100 kHz, the SEN6x maximum, so the sensors can share the bus.
+i2c:
+  id: bus_a
+  sda: GPIO13
+  scl: GPIO14
+  frequency: 100kHz
+
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin:
+      number: GPIO45
+      ignore_strapping_warning: true
+    i2s_bclk_pin: GPIO9
+    i2s_mclk_pin: GPIO16
+
+audio_dac:
+  - platform: es8311
+    id: codec
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+speaker:
+  - platform: i2s_audio
+    id: i2s_speaker
+    i2s_audio_id: i2s_bus
+    i2s_dout_pin: GPIO8
+    dac_type: external
+    audio_dac: codec
+    channel: mono
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    buffer_duration: 100ms  # I2S DMA buffers live in internal RAM, beside the frame buffers
+
+# Plays the embedded sounds (esphome/sounds/, 16-bit mono 16 kHz WAV; see
+# prepare_sound.py). Internal: Home Assistant gets the Alert volume number instead.
+media_player:
+  - platform: speaker
+    id: alert_player
+    internal: true
+    announcement_pipeline:
+      speaker: i2s_speaker
+      format: WAV
+      sample_rate: 16000
+      num_channels: 1
+    files:
+      - id: alert_sound
+        file: sounds/alert.wav
+    # The amplifier is on only while a sound plays (no idle hiss).
+    on_idle:
+      - switch.turn_off: speaker_amp
+
+switch:
+  - platform: gpio
+    id: speaker_amp
+    internal: true
+    restore_mode: ALWAYS_OFF
+    pin:
+      number: GPIO46
+      ignore_strapping_warning: true
+
+number:
+  - platform: template
+    id: alert_volume
+    name: Alert volume
+    icon: mdi:volume-high
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 5
+    initial_value: 40
+    restore_value: true
+    optimistic: true
+    on_value:
+      - media_player.volume_set:
+          id: alert_player
+          volume: !lambda "return x / 100.0f;"
 
 # Status LEDs: 4 WS2812B on GPIO1. The light entity gives Home Assistant power and
 # brightness; atmos_led sets the colour from the rating on screen, fading out and in
