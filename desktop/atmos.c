@@ -163,6 +163,12 @@ static rating rate(int r){
     return NULL;
 }
 static const char *rating_text(rating r){return r?r->text:"--";}
+/* Readings linked with a start-up delay (atmos_set_startup_delay()): until the sensor
+   reports, the badge says so instead of "--". */
+static bool reading_delayed[ATMOS_READINGS];
+static const char *reading_badge(int r){
+    return reading_delayed[r] && isnan(reading_value(r))?"Starting":rating_text(rate(r));
+}
 /* Lowest reading rated at `level` or worse, for artwork that tracks the badge. */
 static float band_start(int r,int level,float fallback){
     float lo=INFINITY;
@@ -176,10 +182,6 @@ bool atmos_set_bands(int reading,const atmos_band *band,int n){
     return true;
 }
 static rating rate_co2(void){return rate(ATMOS_CO2);}
-static rating rate_hcho(void){return rate(ATMOS_HCHO);}
-static rating rate_pm(int size){return rate(ATMOS_PM1+size);}
-static rating rate_gas(int lane){return rate(ATMOS_VOC+lane);}
-static rating rate_climate(int key){return rate(ATMOS_TEMPERATURE+key);}
 /* Overview: the worst-level rating among all readings. */
 static rating rate_overall(void){
     rating worst=NULL;
@@ -813,7 +815,7 @@ static int co2_value_size(void){
 static void draw_co2_detail(void){
     int size=co2_value_size();
     char value[32];format_reading(value,sizeof value,sensor.co2,0,true);
-    detail_header("CARBON DIOXIDE",rating_text(rate_co2()));
+    detail_header("CARBON DIOXIDE",reading_badge(ATMOS_CO2));
     /* Center the visible value/unit block, not the fonts' padded line boxes.
        Canonical digit bounds keep its position stable as readings change. */
     lv_area_t digits=header_ink_bounds("0123456789.k",dashboard_font(size));
@@ -1053,7 +1055,7 @@ static void draw_pm_lower(void){
 }
 static void draw_pm_detail(void){
     const char *unit="\xc2\xb5" "g/m\xc2\xb3";
-    detail_header("PARTICLES",rating_text(rate_pm(pm_selected)));
+    detail_header("PARTICLES",reading_badge(ATMOS_PM1+pm_selected));
     char value[32];
     format_reading(value,sizeof value,pm_value(sensor,pm_selected)<0?NAN:pm_value(sensor,pm_selected),1,false);
     int y[3],value_y[2];
@@ -1227,7 +1229,7 @@ static void hcho_molecules(void){
 static void draw_hcho_detail(void){
     int size=hcho_value_size();
     char value[32];format_reading(value,sizeof value,sensor.hcho,1,false);
-    detail_header("FORMALDEHYDE",rating_text(rate_hcho()));
+    detail_header("FORMALDEHYDE",reading_badge(ATMOS_HCHO));
     /* Centred like the CO2 value/unit block, on canonical ink bounds. */
     lv_area_t digits=header_ink_bounds("0123456789.",dashboard_font(size));
     lv_area_t unit=header_ink_bounds("PPB",dashboard_font(UI_HCHO_UNIT_SIZE));
@@ -1295,7 +1297,7 @@ static void climate_icons(const climate_layout_t *l){
     disc(x,cy,UI_CLIMATE_GAUGE_HUB,false);
 }
 static void draw_climate_detail(void){
-    detail_header("CLIMATE",rating_text(rate_climate(climate_selected)));
+    detail_header("CLIMATE",reading_badge(ATMOS_TEMPERATURE+climate_selected));
     climate_layout_t l=climate_layout();
     int label_base=font_baseline(UI_CLIMATE_LABEL_SIZE),unit_base=font_baseline(UI_CLIMATE_UNIT_SIZE),
         value_base=font_baseline(UI_CLIMATE_VALUE_SIZE);
@@ -1409,7 +1411,7 @@ static void gas_chart(int key,int top){
    gaps between their visible ink. Canonical digit bounds keep rows stable as
    readings change; each string is centred on its column by its own ink. */
 static void draw_gas_detail(void){
-    detail_header("GASES",rating_text(rate_gas(gas_selected)));
+    detail_header("GASES",reading_badge(ATMOS_VOC+gas_selected));
     lv_area_t label=header_ink_bounds("VOCNOx",dashboard_font(UI_GAS_LABEL_SIZE));
     lv_area_t digits=header_ink_bounds("0123456789.-",dashboard_font(UI_GAS_VALUE_SIZE));
     lv_area_t unit=header_ink_bounds("Index",dashboard_font(UI_FONT_UNIT));
@@ -2213,7 +2215,7 @@ void atmos_set_startup_delay(int reading,bool on){
     /* The chart key (field()) each reading draws; all PM sizes share the PM chart. */
     static const int key[ATMOS_READINGS]={0,2,3,7,1,1,1,1,4,5,6};
     if(reading<0 || reading>=ATMOS_READINGS)return;
-    startup_delay[key[reading]]=on;full_dirty=true;
+    startup_delay[key[reading]]=on;reading_delayed[reading]=on;full_dirty=true;data_version++;
 }
 void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;}
 void atmos_set_wifi(int bars){

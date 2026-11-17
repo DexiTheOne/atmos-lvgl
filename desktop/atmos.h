@@ -48,7 +48,8 @@ enum { ATMOS_CO2, ATMOS_VOC, ATMOS_NOX, ATMOS_HCHO, ATMOS_PM1, ATMOS_PM25, ATMOS
        ATMOS_TEMPERATURE, ATMOS_HUMIDITY, ATMOS_PRESSURE, ATMOS_READINGS };
 /* Start-up delay: a reading whose sensor reports nothing for a while after boot (the
    SEN6x, about a minute). Its history and chart span then start at its first valid
-   reading, and the chart waits empty at "LAST 0 SEC" until then. Off by default:
+   reading, and the chart waits empty at "LAST 0 SEC" until then; its page's badge
+   reads "Starting" instead of "--". Off by default:
    the chart's span runs from the first sample of any reading. */
 void atmos_set_startup_delay(int reading, bool on);
 /* Move to the page showing a reading and underline/chart it. Restarts the hold. */
