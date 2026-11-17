@@ -10,12 +10,31 @@ esphome:
           id: alert_player
           volume: !lambda "float v = id(alert_volume).state; return (v) <= 0.0f ? 0.0f : (191.0f + 0.6f * ((v) - 100.0f)) / 255.0f;"
       # Audio power-up, during the splash (the UI waits there for the connection):
-      # start the keep-alive source while the amplifier is still off, so the codec
-      # and I2S start (and pop) unheard, then switch the amplifier on for good.
+      # with the amplifier still off, start the keep-alive source (codec and I2S),
+      # then the bell's own path, so their start-up pops are unheard; then switch the
+      # amplifier on for good.
       - speaker.play:
           id: keepalive_source
           data: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-      - delay: 1s
+      # The first sound still started the announcement pipeline and its mixer source
+      # for the first time (and popped): play the bell once now, unheard, and stop it.
+      - media_player.speaker.play_on_device_media_file:
+          id: alert_player
+          media_file: alert_sound
+          announcement: true
+      - wait_until:
+          condition:
+            media_player.is_announcing: alert_player
+          timeout: 2s
+      - delay: 300ms
+      - media_player.stop:
+          id: alert_player
+          announcement: true
+      - wait_until:
+          condition:
+            media_player.is_idle: alert_player
+          timeout: 2s
+      - delay: 500ms
       - switch.turn_on: speaker_amp
       - logger.log: "Audio ready: amplifier on"
   # Short build path: ESP-IDF object paths exceed Windows' 260-character limit
