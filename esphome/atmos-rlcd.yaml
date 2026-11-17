@@ -90,12 +90,7 @@ atmos:
   alert_leave: 3min
   alert_sound_cooldown: 20min  # no repeat sound this soon after a clear
   on_alert_start:
-    - switch.turn_on: speaker_amp
-    - delay: 20ms
-    - media_player.speaker.play_on_device_media_file:
-        id: alert_player
-        media_file: alert_sound
-        announcement: true
+    - script.execute: play_alert
   # on_alert_clear: no clear sound yet.
   # On while the debounced alert set is non-empty.
   alert_active:
@@ -197,7 +192,44 @@ media_player:
         file: sounds/alert.wav
     # The amplifier is on only while a sound plays (no idle hiss).
     on_idle:
-      - switch.turn_off: speaker_amp
+      - if:
+          condition:
+            not:
+              script.is_running: play_alert
+          then:
+            - switch.turn_off: speaker_amp
+
+# The bell: amplifier on, wait for it to settle (switching on right before the
+# sound clicks), play, and retry once if the player did not start announcing.
+# restart: a new request (e.g. dragging the volume) replaces one in progress.
+script:
+  - id: play_alert
+    mode: restart
+    then:
+      - switch.turn_on: speaker_amp
+      - delay: 300ms
+      - media_player.speaker.play_on_device_media_file:
+          id: alert_player
+          media_file: alert_sound
+          announcement: true
+      - wait_until:
+          condition:
+            media_player.is_announcing: alert_player
+          timeout: 1s
+      - if:
+          condition:
+            not:
+              media_player.is_announcing: alert_player
+          then:
+            - logger.log: "Alert sound did not start; retrying"
+            - media_player.speaker.play_on_device_media_file:
+                id: alert_player
+                media_file: alert_sound
+                announcement: true
+            - wait_until:
+                condition:
+                  media_player.is_announcing: alert_player
+                timeout: 1s
 
 switch:
   - platform: gpio
@@ -227,6 +259,12 @@ number:
       - media_player.volume_set:
           id: alert_player
           volume: !lambda "return (x) <= 0.0f ? 0.0f : (191.0f + 0.6f * ((x) - 100.0f)) / 255.0f;"
+      # Play the bell at the new volume (not when the saved value is restored at boot).
+      - if:
+          condition:
+            lambda: "return millis() > 10000;"
+          then:
+            - script.execute: play_alert
 
 # Status LEDs: 4 WS2812B on GPIO1. The light entity gives Home Assistant power and
 # brightness; atmos_led sets the colour from the rating on screen, fading out and in
