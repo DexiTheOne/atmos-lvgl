@@ -20,6 +20,8 @@ class SCD30Component final : public Component, public sensirion_common::Sensirio
     ambient_pressure_compensation_ = (uint16_t) (pressure * 1000);
   }
   void set_temperature_offset(float offset) { temperature_offset_ = offset; }
+  /// atmos: pressure sensor (hPa = mbar) fed to the SCD30 whenever it changes by 1 mbar.
+  void set_ambient_pressure_source(sensor::Sensor *source) { pressure_source_ = source; }
   void set_update_interval(uint16_t interval) { update_interval_ = interval; }
   bool force_recalibration_with_reference(uint16_t co2_reference);
   uint16_t get_forced_calibration_reference();
@@ -31,6 +33,7 @@ class SCD30Component final : public Component, public sensirion_common::Sensirio
  protected:
   bool is_data_ready_();
   bool sync_asc_();
+  void apply_pressure_source_();
 
   enum ErrorCode {
     COMMUNICATION_FAILED,
@@ -46,6 +49,7 @@ class SCD30Component final : public Component, public sensirion_common::Sensirio
   uint16_t update_interval_{0xFFFF};
 
   sensor::Sensor *co2_sensor_{nullptr};
+  sensor::Sensor *pressure_source_{nullptr};
   sensor::Sensor *humidity_sensor_{nullptr};
   sensor::Sensor *temperature_sensor_{nullptr};
 };

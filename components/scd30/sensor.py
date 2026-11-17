@@ -5,6 +5,7 @@ import esphome.config_validation as cv
 from esphome.const import (
     CONF_ALTITUDE_COMPENSATION,
     CONF_AMBIENT_PRESSURE_COMPENSATION,
+    CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE,
     CONF_AUTOMATIC_SELF_CALIBRATION,
     CONF_CO2,
     CONF_HUMIDITY,
@@ -68,6 +69,10 @@ CONFIG_SCHEMA = (
                 cv.int_range(min=0, max=0xFFFF, max_included=False),
             ),
             cv.Optional(CONF_AMBIENT_PRESSURE_COMPENSATION, default=0): cv.pressure,
+            # atmos: a pressure sensor in hPa (mbar), sent when it changes by 1 mbar.
+            cv.Optional(CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE): cv.use_id(
+                sensor.Sensor
+            ),
             cv.Optional(CONF_TEMPERATURE_OFFSET): cv.All(
                 cv.temperature_delta,
                 cv.float_range(min=0, max=655.35),
@@ -100,6 +105,10 @@ async def to_code(config: ConfigType) -> None:
                 config[CONF_AMBIENT_PRESSURE_COMPENSATION]
             )
         )
+
+    if CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE in config:
+        sens = await cg.get_variable(config[CONF_AMBIENT_PRESSURE_COMPENSATION_SOURCE])
+        cg.add(var.set_ambient_pressure_source(sens))
 
     if CONF_TEMPERATURE_OFFSET in config:
         cg.add(var.set_temperature_offset(config[CONF_TEMPERATURE_OFFSET]))

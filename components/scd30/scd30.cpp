@@ -101,6 +101,12 @@ void SCD30Component::setup() {
 #endif
 
   /// Sensor initialization
+  // atmos: start with the pressure source's reading when it already has one.
+  if (this->pressure_source_ != nullptr && this->pressure_source_->has_state()) {
+    float p = this->pressure_source_->state;
+    if (p >= 700.0f && p <= 1400.0f)
+      this->ambient_pressure_compensation_ = (uint16_t) lroundf(p);
+  }
   if (!this->write_command(SCD30_CMD_START_CONTINUOUS_MEASUREMENTS, this->ambient_pressure_compensation_)) {
     ESP_LOGE(TAG, "Sensor SCD30 error starting continuous measurements.");
     this->error_code_ = MEASUREMENT_INIT_FAILED;
@@ -110,6 +116,7 @@ void SCD30Component::setup() {
 
   // check each 500ms if data is ready, and read it in that case
   this->set_interval("status-check", 500, [this]() {
+    this->apply_pressure_source_();
     if (this->is_data_ready_())
       this->update();
   });
@@ -149,6 +156,7 @@ void SCD30Component::dump_config() {
   LOG_SENSOR("  ", "CO2", this->co2_sensor_);
   LOG_SENSOR("  ", "Temperature", this->temperature_sensor_);
   LOG_SENSOR("  ", "Humidity", this->humidity_sensor_);
+  LOG_SENSOR("  ", "Pressure source", this->pressure_source_);
 }
 
 void SCD30Component::update() {
@@ -254,6 +262,25 @@ void SCD30Component::apply_automatic_self_calibration(bool asc) {
     return;  // setup applies enable_asc_
   if (!this->sync_asc_())
     ESP_LOGE(TAG, "Unable to set ASC");
+}
+// atmos: send the pressure source's reading (hPa = mbar) to the sensor when it has
+// moved by at least 1 mbar. Re-sending the start command updates the compensation
+// without interrupting measurement; the range is the SCD30's (700-1400 mbar).
+void SCD30Component::apply_pressure_source_() {
+  if (this->pressure_source_ == nullptr || !this->pressure_source_->has_state())
+    return;
+  float p = this->pressure_source_->state;
+  if (!(p >= 700.0f && p <= 1400.0f))
+    return;  // also rejects NaN
+  uint16_t mbar = (uint16_t) lroundf(p);
+  if (mbar == this->ambient_pressure_compensation_)
+    return;
+  if (this->write_command(SCD30_CMD_START_CONTINUOUS_MEASUREMENTS, mbar)) {
+    ESP_LOGD(TAG, "Ambient pressure compensation %u -> %u mbar", this->ambient_pressure_compensation_, mbar);
+    this->ambient_pressure_compensation_ = mbar;
+  } else {
+    ESP_LOGW(TAG, "Unable to set ambient pressure compensation");
+  }
 }
 
 }  // namespace esphome::scd30
