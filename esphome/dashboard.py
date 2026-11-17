@@ -13,10 +13,11 @@ Run with the project's ESPHome venv (needs `websockets`):
   .venv-esphome/Scripts/python.exe esphome/dashboard.py put atmos.yaml local-copy.yaml
   .venv-esphome/Scripts/python.exe esphome/dashboard.py install atmos.yaml   # OTA, waits for compile+upload
   .venv-esphome/Scripts/python.exe esphome/dashboard.py logs atmos.yaml 60   # device log for 60 s
+  .venv-esphome/Scripts/python.exe esphome/dashboard.py follow JOB_ID          # a build job's output
   .venv-esphome/Scripts/python.exe esphome/dashboard.py call devices/list '{}'
 Set ATMOS_DASHBOARD=host:port to use another server.
 """
-import asyncio, itertools, json, os, re, sys
+import asyncio, io, itertools, json, os, re, sys
 
 import websockets
 
@@ -87,9 +88,24 @@ class Dashboard:
             if done:
                 for j in jobs:
                     if j["status"] != "completed":
-                        print("\n".join(j.get("output") or [])[-4000:], j.get("error") or "", file=out)
+                        # The job record keeps no output: replay its log and show the tail.
+                        log = io.StringIO()
+                        await self.follow(j["job_id"], out=log)
+                        print(log.getvalue()[-4000:], j.get("error") or "", file=out)
                 return all(j["status"] == "completed" for j in jobs)
             await asyncio.sleep(every)
+
+    async def follow(self, job_id, out=sys.stdout):
+        """Print a job's build output (firmware/follow_job) until it ends."""
+        mid = await self.send("firmware/follow_job", {"job_id": job_id})
+        while True:
+            m = json.loads(await asyncio.wait_for(self.ws.recv(), 1800))
+            if m.get("message_id") != mid:
+                continue
+            if m.get("event") == "output":
+                print(ANSI.sub("", m.get("data") or "").rstrip("\n"), file=out, flush=True)
+            elif "event" in m or "error_code" in m:
+                return
 
     async def logs(self, configuration, seconds, out=sys.stdout):
         """Stream the device's log through the dashboard for `seconds`."""
@@ -139,6 +155,8 @@ async def main(argv):
             ok = await d.wait_jobs(rest[0], since, need=("compile", "upload"))
             print("== installed" if ok else "== failed")
             return 0 if ok else 1
+        elif cmd == "follow":
+            await d.follow(rest[0])
         elif cmd == "logs":
             await d.logs(rest[0], float(rest[1]) if len(rest) > 1 else 30)
         elif cmd == "call":

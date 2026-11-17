@@ -214,6 +214,8 @@ void AtmosComponent::set_sensor(int reading, sensor::Sensor *s) {
   });
 }
 
+void AtmosComponent::set_startup_delay(int reading, bool on) { atmos_set_startup_delay(reading, on); }
+
 /* All linked readings in one atmos_set_readings() per frame, however many sensors reported. */
 void AtmosComponent::push_readings_() {
   const float *v = this->values_;
