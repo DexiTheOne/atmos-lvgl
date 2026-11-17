@@ -243,7 +243,7 @@ bool SCD30Component::sync_asc_() {
   uint16_t stored;
   if (this->get_register(SCD30_CMD_AUTOMATIC_SELF_CALIBRATION, stored)) {
     if ((stored != 0) == this->enable_asc_) {
-      ESP_LOGD(TAG, "ASC already %s; not rewritten", ONOFF(this->enable_asc_));
+      ESP_LOGI(TAG, "ASC already %s; not rewritten", ONOFF(this->enable_asc_));
       return true;
     }
   } else {
@@ -276,7 +276,13 @@ void SCD30Component::apply_pressure_source_() {
   if (mbar == this->ambient_pressure_compensation_)
     return;
   if (this->write_command(SCD30_CMD_START_CONTINUOUS_MEASUREMENTS, mbar)) {
-    ESP_LOGD(TAG, "Ambient pressure compensation %u -> %u mbar", this->ambient_pressure_compensation_, mbar);
+    // INFO for the first reading after boot (the device logs at INFO), DEBUG after.
+    if (this->pressure_sent_) {
+      ESP_LOGD(TAG, "Ambient pressure compensation %u -> %u mbar", this->ambient_pressure_compensation_, mbar);
+    } else {
+      ESP_LOGI(TAG, "Ambient pressure compensation from source: %u mbar", mbar);
+      this->pressure_sent_ = true;
+    }
     this->ambient_pressure_compensation_ = mbar;
   } else {
     ESP_LOGW(TAG, "Unable to set ambient pressure compensation");

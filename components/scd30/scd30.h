@@ -50,6 +50,7 @@ class SCD30Component final : public Component, public sensirion_common::Sensirio
 
   sensor::Sensor *co2_sensor_{nullptr};
   sensor::Sensor *pressure_source_{nullptr};
+  bool pressure_sent_{false};
   sensor::Sensor *humidity_sensor_{nullptr};
   sensor::Sensor *temperature_sensor_{nullptr};
 };
