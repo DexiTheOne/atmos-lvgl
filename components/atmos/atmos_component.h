@@ -65,7 +65,7 @@ class AtmosComponent : public Component {
   /* on_alert_start / on_alert_clear: fired at the transition into / out of the alert-focus cycle. */
   Trigger<> *get_alert_start_trigger() { return &this->alert_start_trigger_; }
   Trigger<> *get_alert_clear_trigger() { return &this->alert_clear_trigger_; }
-  /* Select option: 0 "Auto advance" (turns cycling on), else reading option - 1. */
+  /* Select option: 0 "Auto Advance" (turns cycling on), else reading option - 1. */
   void select_option(int option);
   void set_auto(bool on);
   void set_hold(float seconds);
@@ -133,7 +133,7 @@ class AtmosComponent : public Component {
   Trigger<> alert_start_trigger_, alert_clear_trigger_;
   int pending_reading_{-1}, published_option_{-1};
   // While cycling, the select shows a reading only while the reading chosen by the
-  // select or a key (manual_) is on screen, otherwise "Auto advance", so cycling
+  // select or a key (manual_) is on screen, otherwise "Auto Advance", so cycling
   // does not record a state change per step. A key press during a transition takes
   // effect on arrival: adopt_ waits for the reading to move off adopt_from_.
   int manual_{-1}, adopt_from_{-1};
@@ -147,8 +147,8 @@ class AtmosComponent : public Component {
   void push_readings_();
 };
 
-/* Drop-down of "Auto advance" and the readings: choosing a reading moves to its page and
-   underlines/charts it; choosing "Auto advance" turns cycling on. */
+/* Drop-down of "Auto Advance" and the readings: choosing a reading moves to its page and
+   underlines/charts it; choosing "Auto Advance" turns cycling on. */
 class AtmosReadingSelect : public select::Select, public Parented<AtmosComponent> {
  protected:
   void control(size_t index) override { this->parent_->select_option((int) index); }

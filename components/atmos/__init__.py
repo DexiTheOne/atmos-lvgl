@@ -314,7 +314,7 @@ async def to_code(config):
             lo, hi = band.get(CONF_MIN_VALUE), band.get(CONF_MAX_VALUE)
             cg.add(var.add_band(index, nan if lo is None else lo, nan if hi is None else hi, band[CONF_LEVEL], band[CONF_TEXT], band[CONF_ALERT]))
     if conf := config.get(CONF_READING_SELECT):
-        sel = await select.new_select(conf, options=["Auto advance"] + [name for _, name in READINGS])
+        sel = await select.new_select(conf, options=["Auto Advance"] + [name for _, name in READINGS])
         await cg.register_parented(sel, var)
         cg.add(var.set_reading_select(sel))
     for key, options, pressure in ((CONF_TEMPERATURE_UNIT, TEMPERATURE_UNITS, False), (CONF_PRESSURE_UNIT, PRESSURE_UNITS, True)):

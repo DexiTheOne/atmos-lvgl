@@ -85,7 +85,7 @@ atmos:
   reading_select:
     name: Reading
   auto_advance:
-    name: Auto advance
+    name: Auto Advance
   hold_time:
     name: Page hold time  # seconds, 2-600
     max_value: 120
