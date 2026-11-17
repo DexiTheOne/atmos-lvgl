@@ -81,7 +81,8 @@ class AtmosComponent : public Component {
   const char *splash_name_{"Atmos"};
   const char *splash_subtitle_{"Visualizing Air Quality"};
   uint32_t splash_timeout_ms_{20000};
-  uint32_t splash_ms_{0};  // when the splash was shown
+  uint32_t splash_ms_{0};  // when the splash was shown (ms since boot)
+  uint32_t ui_ms_{0};      // when the UI was created (ms since boot)
   bool frame_stats_{false};
   uint32_t key_interval_ms_{250};
   uint32_t last_key_ms_{0};

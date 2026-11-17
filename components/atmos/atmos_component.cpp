@@ -102,6 +102,7 @@ void AtmosComponent::wait_ready_() {
   if (this->frame_stats_)
     atmos_set_clock([]() -> uint32_t { return micros(); });
   this->started_ = true;
+  this->ui_ms_ = millis();
   atmos_set_auto(this->auto_);
   if (this->pending_reading_ >= 0)
     atmos_select_reading(this->pending_reading_);
@@ -278,8 +279,11 @@ void AtmosComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "Atmos UI: own LVGL %d.%d.%d, 1-bit display, frame period %u us, frame stats %s every %u ms",
                 LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH, (unsigned) this->period_us_,
                 ONOFF(this->frame_stats_), (unsigned) this->report_ms_);
-  ESP_LOGCONFIG(TAG, "  Splash: \"%s\" / \"%s\", timeout %u ms; shown %u ms after boot", this->splash_name_,
-                this->splash_subtitle_, (unsigned) this->splash_timeout_ms_, (unsigned) this->splash_ms_);
+  ESP_LOGCONFIG(TAG, "  Splash: \"%s\" / \"%s\", timeout %u ms", this->splash_name_, this->splash_subtitle_,
+                (unsigned) this->splash_timeout_ms_);
+  // At INFO, so it reaches a log client that connects after boot (config lines need CONFIG).
+  ESP_LOGI(TAG, "Boot: splash shown %u ms after boot, UI started at %u ms", (unsigned) this->splash_ms_,
+           (unsigned) this->ui_ms_);
 }
 
 /* Direct mode: px_map is the whole frame; only the rows LVGL redrew are converted.
