@@ -24,7 +24,31 @@ The panel has no touch. Its two keys are `binary_sensor: gpio` entries in `atmos
 
 `key_interval` (default `250ms`, at most 5 s) rate-limits `atmos.next`/`atmos.previous`: a press within that time of the last accepted one is ignored, so contact bounce or rapid repeats cannot pile up page changes. Keep the binary sensors' `delayed_on`/`delayed_off` debounce filters as well.
 
-Boot splash: the ST7305 driver writes a blank frame to panel memory before Display On, so power-on shows no static. The component then draws the splash at once in its setup: `splash_name` (default `Atmos`, in the largest font that fits) and `splash_subtitle` (default `Visualizing Air Quality`; empty for none) over the "Made for ESPHome" badge (`desktop/splash_badge.h`). The UI starts once a Home Assistant API client connects (the network, without `api:`; at once with neither), or after `splash_timeout` (default `20s`, at most 5 min). `atmos_init()` runs in one scheduler call and the first frame in the next. That first frame opens from the splash with the overview's portal, zooming into the badge's house logo. The log reports "Splash shown in … ms" and "Atmos UI started after … ms of splash".
+Boot splash: the ST7305 driver writes a blank frame to panel memory before Display On, so power-on shows no static. The component then draws the splash at once in its setup: `splash_name` (default `Atmos`, in the largest font that fits) and `splash_subtitle` (default `Visualizing Air Quality`; empty for none) over the "Made for ESPHome" badge (`desktop/splash_badge.h`). The UI starts once a Home Assistant API client connects (the network, without `api:`; at once with neither), or after `splash_timeout` (default `20s`, at most 5 min). `atmos_init()` runs in one scheduler call and the first frame in the next. That first frame opens from the splash with the overview's portal, zooming into the badge's house logo. The log reports "Splash shown in … ms" and "Atmos UI started after … ms of splash"; the config dump (logger level `CONFIG` or lower) also gives both times in ms since boot, for a log client that connects later.
+
+Boot order: the ST7305 driver sets up at ESPHome's `HARDWARE` priority and the atmos component right after it, so the splash is drawn before the sensors, Wi-Fi and the API set up, and the device answers power-on at once. On the RLCD with the sensors below this moved the splash from 748 ms to 576 ms after ESPHome starts (2026-11-16); most of the rest is the panel's reset and sleep-out waits in the driver, kept at the reference values. Two settings shorten boot further: leave the I²C `scan` off once addresses are known, and skip ESP-IDF's boot-time PSRAM test, which runs before ESPHome starts:
+
+```yaml
+esp32:
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_SPIRAM_MEMTEST: n  # a missing PSRAM is still reported; re-enable first if crashes appear
+```
+
+Without the test a faulty PSRAM chip no longer stops the boot with an error; it would show later as crashes or corrupted drawing. PSRAM holds only LVGL's working memory (the frame buffers are in internal RAM).
+
+## Sensors on the RLCD device
+
+The `atmos` device (`atmos.yaml` on the dashboard server) has three I²C sensors on one bus, SDA GPIO13 and SCL GPIO14 at 50 kHz (the SCD30 stretches the clock), each read every 10 s:
+
+| Sensor | Address | ESPHome platform | Readings used |
+|---|---|---|---|
+| Sensirion SEN68 | 0x6B | `sen6x` (`type: SEN68`) | PM1/2.5/4/10, VOC and NOx index, formaldehyde |
+| Sensirion SCD30 | 0x61 | `scd30` | CO2, humidity |
+| Adafruit BMP581 | 0x47 (0x46 with ADR cut; ESPHome defaults to 0x46) | `bmp581_i2c` | temperature, pressure (Pa × 0.01 → hPa) |
+
+Humidity comes from the SCD30 (±3 % RH, against the SEN68's ±4.5 %). Temperature comes from the BMP581, whose microwatt draw does not warm it; the SCD30 read about 1 °C warmer from self-heating, and the SEN68 sits in a fan-and-laser module. The SEN68 readings are linked with `startup_delay: true`: it reports nothing for about 60 s after boot. The bus also answers at 0x18, 0x40, 0x51 and 0x70, the board's own chips (left unconfigured).
 
 ## Home Assistant controls
 
