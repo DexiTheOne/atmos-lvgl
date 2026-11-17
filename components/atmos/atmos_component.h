@@ -42,9 +42,10 @@ class AtmosComponent : public Component {
   void set_splash_name(const char *name) { this->splash_name_ = name; }
   void set_splash_subtitle(const char *text) { this->splash_subtitle_ = text; }
   void set_splash_timeout_ms(uint32_t ms) { this->splash_timeout_ms_ = ms; }
-  // After the display (PROCESSOR) so the panel is ready for the splash; before the
-  // number and switch entities (PROCESSOR - 1), which apply settings to it.
-  float get_setup_priority() const override { return setup_priority::PROCESSOR - 0.5f; }
+  // Right after the display (HARDWARE), so the splash is up before the sensors, Wi-Fi
+  // and other slow setup run: the device answers power-on at once. The number and
+  // switch entities (PROCESSOR - 1) apply their settings to it later.
+  float get_setup_priority() const override { return setup_priority::HARDWARE - 0.5f; }
   void setup() override;
   void dump_config() override;
   void advance(int direction);

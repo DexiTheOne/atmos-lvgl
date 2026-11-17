@@ -42,6 +42,8 @@ class ST7305RLCD : public display::DisplayBuffer,
                                          spi::CLOCK_PHASE_LEADING, spi::DATA_RATE_10MHZ> {
  public:
   void setup() override;
+  // Ahead of sensors and other DATA components, so the splash can follow at once.
+  float get_setup_priority() const override { return setup_priority::HARDWARE; }
   void update() override;
   void dump_config() override;
   void fill(Color color) override;
