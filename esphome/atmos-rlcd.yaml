@@ -8,7 +8,7 @@ esphome:
     then:
       - media_player.volume_set:
           id: alert_player
-          volume: !lambda "return id(alert_volume).state / 100.0f;"
+          volume: !lambda "float v = id(alert_volume).state; return (v) <= 0.0f ? 0.0f : (191.0f + 0.6f * ((v) - 100.0f)) / 255.0f;"
   # Short build path: ESP-IDF object paths exceed Windows' 260-character limit
   # when long paths are disabled. Also set ESPHOME_ESP_IDF_PREFIX=C:\ESPHome\idf.
   build_path: C:/ESPHome/build/atmos-rlcd
@@ -178,6 +178,8 @@ speaker:
     sample_rate: 16000
     bits_per_sample: 16bit
     buffer_duration: 100ms  # I2S DMA buffers live in internal RAM, beside the frame buffers
+    # Keep I2S clocked between sounds: restarting it pops through the amplifier.
+    timeout: never
 
 # Plays the embedded sounds (esphome/sounds/, 16-bit mono 16 kHz WAV; see
 # prepare_sound.py). Internal: Home Assistant gets the Alert volume number instead.
@@ -219,10 +221,12 @@ number:
     initial_value: 40
     restore_value: true
     optimistic: true
+    # ES8311 volume is 0.5 dB per step, 0.75 = 0 dB, 1.0 = +32 dB (clips). The
+    # slider runs -28.5 dB (5 %) to 0 dB (100 %); 0 % is silent.
     on_value:
       - media_player.volume_set:
           id: alert_player
-          volume: !lambda "return x / 100.0f;"
+          volume: !lambda "return (x) <= 0.0f ? 0.0f : (191.0f + 0.6f * ((x) - 100.0f)) / 255.0f;"
 
 # Status LEDs: 4 WS2812B on GPIO1. The light entity gives Home Assistant power and
 # brightness; atmos_led sets the colour from the rating on screen, fading out and in
