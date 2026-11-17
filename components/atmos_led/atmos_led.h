@@ -7,10 +7,11 @@
 
 namespace esphome::atmos_led {
 
-/* Drives an addressable light with the colour of the rating on screen. It marks the
-   light's output as running an effect, so the light's own colour is not written and
-   only its power and brightness (the correction's local brightness) apply. */
-class AtmosLed : public Component {
+/* Drives an addressable strip with the colour of the rating on screen. It marks the
+   strip's output as running an effect, so the strip light's own colour is not written,
+   and holds that light on at full brightness. AtmosLed is itself a brightness-only
+   light: Home Assistant's power and brightness scale the colours. */
+class AtmosLed : public Component, public light::LightOutput {
  public:
   void set_atmos(atmos::AtmosComponent *atmos) { this->atmos_ = atmos; }
   void set_light(light::LightState *state) { this->state_ = state; }
@@ -18,12 +19,20 @@ class AtmosLed : public Component {
   void setup() override;
   void loop() override;
   void dump_config() override;
+  light::LightTraits get_traits() override {
+    auto traits = light::LightTraits();
+    traits.set_supported_color_modes({light::ColorMode::BRIGHTNESS});
+    return traits;
+  }
+  void setup_state(light::LightState *state) override { this->own_ = state; }
+  void write_state(light::LightState *state) override {}  // read in loop()
   float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }
 
  protected:
   uint32_t target_() const;
   atmos::AtmosComponent *atmos_{nullptr};
-  light::LightState *state_{nullptr};
+  light::LightState *state_{nullptr};  // the strip
+  light::LightState *own_{nullptr};    // this brightness-only light
   light::AddressableLight *out_{nullptr};
   uint32_t fade_ms_{500};
   float shown_[3]{};      // colour at full intensity outside transitions (0..255)

@@ -271,22 +271,23 @@ number:
           then:
             - script.execute: play_alert
 
-# Status LEDs: 4 WS2812B on GPIO1. The light entity gives Home Assistant power and
-# brightness; atmos_led sets the colour from the rating on screen, fading out and in
+# Status LEDs: 4 WS2812B on GPIO1. atmos_led is the Home Assistant light (power and
+# brightness only) and sets the colour from the rating on screen, fading out and in
 # with each page transition.
 light:
   - platform: esp32_rmt_led_strip
-    id: status_leds
-    name: Status LEDs
+    id: status_strip
+    internal: true  # colours only; Home Assistant sees the Status LEDs light below
     chipset: WS2812
     rgb_order: GRB
     pin: GPIO1
     num_leds: 4
-    restore_mode: RESTORE_DEFAULT_ON
-    default_transition_length: 300ms
+    restore_mode: ALWAYS_ON
 
 atmos_led:
-  light_id: status_leds
+  light_id: status_strip
+  name: Status LEDs  # brightness-only light: power and a brightness slider
+  default_transition_length: 300ms
 
 # The board's two keys (active low). No touch, so they step the underlined reading
 # within a page, then move to the neighbouring page. GPIO0 is also the boot

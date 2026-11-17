@@ -8,6 +8,8 @@ static const char *const TAG = "atmos_led";
 void AtmosLed::setup() {
   this->out_ = static_cast<light::AddressableLight *>(this->state_->get_output());
   this->last_ms_ = millis();
+  // The strip only carries colours: keep it on at full brightness.
+  this->state_->make_call().set_state(true).set_brightness(1.0f).set_transition_length(0).perform();
 }
 
 void AtmosLed::dump_config() {
@@ -54,6 +56,14 @@ void AtmosLed::loop() {
 
   // Keep the light from writing its own colour (selecting an effect clears this).
   this->out_->set_effect_active(true);
+  // Power and brightness of this light (with its transitions) scale the colour.
+  float level = 0.0f;
+  if (this->own_ != nullptr) {
+    auto own = this->own_->current_values;
+    level = own.get_state() * own.get_brightness();
+  }
+  for (int i = 0; i < 3; i++)
+    rgb[i] *= level;
   auto v = this->state_->current_values;
   uint8_t brightness = light::to_uint8_scale(v.get_brightness() * v.get_state());
   uint32_t packed = (uint32_t(rgb[0] + 0.5f) << 16) | (uint32_t(rgb[1] + 0.5f) << 8) | uint32_t(rgb[2] + 0.5f);
@@ -62,7 +72,7 @@ void AtmosLed::loop() {
   this->written_ = packed;
   this->written_brightness_ = brightness;
   // With the effect flag set, update_state() only sets the correction's brightness
-  // from the light's power and brightness.
+  // from the strip light's (full) brightness.
   this->out_->update_state(this->state_);
   this->out_->all() = Color(packed >> 16, (packed >> 8) & 0xFF, packed & 0xFF);
   this->out_->schedule_show();

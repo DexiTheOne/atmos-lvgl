@@ -312,15 +312,17 @@ then point `atmos_led` at it:
 ```yaml
 light:
   - platform: esp32_rmt_led_strip
-    id: status_leds
-    name: Status LEDs      # Home Assistant: power and brightness
+    id: status_strip
+    internal: true         # carries the colours only
     chipset: WS2812
     rgb_order: GRB
     pin: GPIO1
     num_leds: 4
+    restore_mode: ALWAYS_ON
 
 atmos_led:
-  light_id: status_leds
+  light_id: status_strip
+  name: Status LEDs        # Home Assistant: power and a brightness slider
   fade_time: 500ms         # cross-fade when a rating changes on a still page
 
 atmos:
@@ -332,5 +334,7 @@ atmos:
 
 Bands without `led_color` use green (level 0), amber (1) or red (2+). Page transitions
 fade the LEDs out over the first half of the display's transition and into the next
-page's colour over the second. The light's colour and effects in Home Assistant are
-ignored; its power and brightness apply.
+page's colour over the second. `atmos_led` is itself a brightness-only light (any
+light option, such as `default_transition_length` or `restore_mode`, applies), so Home
+Assistant shows power and a brightness slider and no colour controls. Keep the strip
+light `internal` and on: atmos_led holds it at full brightness.
