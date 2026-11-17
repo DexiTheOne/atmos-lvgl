@@ -87,11 +87,11 @@ atmos:
   auto_advance:
     name: Auto Advance
   hold_time:
-    name: Page hold time  # seconds, 2-600
+    name: Page Hold Time  # seconds, 2-600
     max_value: 120
     initial_value: 6.5
   history_time:
-    name: History time  # minutes, 1-1440
+    name: History Time  # minutes, 1-1440
     max_value: 240
     initial_value: 2
 
@@ -108,7 +108,7 @@ atmos:
 binary_sensor:
   - platform: gpio
     id: key_left
-    name: Left key
+    internal: true  # no Home Assistant entity
     pin:
       number: GPIO18
       inverted: true
@@ -122,7 +122,7 @@ binary_sensor:
       - atmos.previous
   - platform: gpio
     id: key_right
-    name: Right key
+    internal: true  # no Home Assistant entity
     pin:
       number: GPIO0
       inverted: true
