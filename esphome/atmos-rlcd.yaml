@@ -86,15 +86,15 @@ atmos:
     name: Reading
   # Automatic cycling through the readings (restored after a reboot).
   auto_advance:
-    name: Auto advance
+    name: Auto Advance
   # While any reading's band alerts, cycling shows only alerting readings (off by default).
   alert_focus:
-    name: Alert focus
+    name: Alert Focus
   # Alert sounds: the bell plays where cycling enters the alert-focus cycle (needs
   # Alert focus). Readings join the alert set after alerting for alert_enter and
   # leave it after alert_leave clear; badges still show the live rating.
   alert_sound:
-    name: Alert sound
+    name: Alert Sound
   alert_enter: 60s
   alert_leave: 3min
   alert_sound_cooldown: 20min  # no repeat sound this soon after a clear
@@ -103,17 +103,17 @@ atmos:
   # on_alert_clear: no clear sound yet.
   # On while the debounced alert set is non-empty.
   alert_active:
-    name: Air quality alert
+    name: Air Quality Alert
   # Seconds each page is held (split between its readings) before moving on.
   # min_value/max_value may narrow the 2-600 s the UI accepts.
   hold_time:
-    name: Page hold time
+    name: Page Hold Time
     max_value: 120
     initial_value: 6.5
   # Minutes of history the charts show (1-1440). Shrinking it discards older samples;
   # growing it lets the chart fill up to the new span.
   history_time:
-    name: History time
+    name: History Time
     max_value: 240
     initial_value: 2
   # Data source per reading: the id of any ESPHome sensor (any platform, or a
@@ -131,7 +131,7 @@ atmos:
   # Badge text per reading: the first band whose [min, max) holds the reading wins;
   # leave min or max out for an open end. Any text up to 15 characters. level orders
   # severity (default: the band's position): the overview shows the worst. alert
-  # (default: level 2 or more) raises the warning, Air quality alert and alert focus. Readings not listed keep the built-in Good/Fair/Poor:
+  # (default: level 2 or more) raises the warning, Air Quality Alert and alert focus. Readings not listed keep the built-in Good/Fair/Poor:
   # co2, voc, nox, formaldehyde, pm1, pm2_5, pm4, pm10, temperature, humidity, pressure.
   ratings:
     co2:
@@ -197,7 +197,7 @@ speaker:
         timeout: never
 
 # Plays the embedded sounds (esphome/sounds/, 16-bit mono 16 kHz WAV; see
-# prepare_sound.py). Internal: Home Assistant gets the Alert volume number instead.
+# prepare_sound.py). Internal: Home Assistant gets the Alert Volume number instead.
 media_player:
   - platform: speaker
     id: alert_player
@@ -254,7 +254,7 @@ switch:
 number:
   - platform: template
     id: alert_volume
-    name: Alert volume
+    name: Alert Volume
     icon: mdi:volume-high
     entity_category: config
     unit_of_measurement: "%"
@@ -301,7 +301,7 @@ atmos_led:
 binary_sensor:
   - platform: gpio
     id: key_left
-    name: Left key
+    internal: true  # no Home Assistant entity
     pin:
       number: GPIO18
       inverted: true
@@ -315,7 +315,7 @@ binary_sensor:
       - atmos.previous
   - platform: gpio
     id: key_right
-    name: Right key
+    internal: true  # no Home Assistant entity
     pin:
       number: GPIO0
       inverted: true
