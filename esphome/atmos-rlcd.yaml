@@ -1,4 +1,4 @@
-﻿# Frame-pacing benchmark on the real Waveshare ESP32-S3-RLCD-4.2 panel.
+# Frame-pacing benchmark on the real Waveshare ESP32-S3-RLCD-4.2 panel.
 # Same as atmos-bench.yaml but with the board's own display pins (Waveshare docs).
 
 esphome:
@@ -9,8 +9,8 @@ esphome:
       - media_player.volume_set:
           id: alert_player
           volume: !lambda "float v = id(alert_volume).state; return (v) <= 0.0f ? 0.0f : (191.0f + 0.6f * ((v) - 100.0f)) / 255.0f;"
-      # Prime the player and I2S with silence now, amplifier off: the codec's power-up pop then never reaches the
-      # speaker, and timeout: never keeps it running for every later sound.
+      # Start the player and I2S now with silence; timeout: never keeps the codec
+      # running, so later sounds start at once and without a power-up pop.
       - media_player.speaker.play_on_device_media_file:
           id: alert_player
           media_file: silence
@@ -198,24 +198,13 @@ media_player:
         file: sounds/alert.wav
       - id: silence
         file: sounds/silence.wav
-    # The amplifier is on only while a sound plays (no idle hiss).
-    on_idle:
-      - if:
-          condition:
-            not:
-              script.is_running: play_alert
-          then:
-            - switch.turn_off: speaker_amp
 
-# The bell: amplifier on, wait for it to settle (switching on right before the
-# sound clicks), play, and retry once if the player did not start announcing.
+# The bell: play, and retry once if the player did not start announcing.
 # restart: a new request (e.g. dragging the volume) replaces one in progress.
 script:
   - id: play_alert
     mode: restart
     then:
-      - switch.turn_on: speaker_amp
-      - delay: 300ms
       - media_player.speaker.play_on_device_media_file:
           id: alert_player
           media_file: alert_sound
@@ -243,7 +232,8 @@ switch:
   - platform: gpio
     id: speaker_amp
     internal: true
-    restore_mode: ALWAYS_OFF
+    # Always on: switching it per sound clicked, and it is silent when idle.
+    restore_mode: ALWAYS_ON
     pin:
       number: GPIO46
       ignore_strapping_warning: true
