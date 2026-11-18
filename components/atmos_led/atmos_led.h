@@ -4,6 +4,8 @@
 #include "esphome/components/atmos/atmos_component.h"
 #include "esphome/components/light/addressable_light.h"
 #include "esphome/components/light/light_state.h"
+#include "esphome/components/sensor/sensor.h"
+#include "esphome/components/switch/switch.h"
 
 namespace esphome::atmos_led {
 
@@ -16,6 +18,14 @@ class AtmosLed : public Component, public light::LightOutput {
   void set_atmos(atmos::AtmosComponent *atmos) { this->atmos_ = atmos; }
   void set_light(light::LightState *state) { this->state_ = state; }
   void set_fade_ms(uint32_t ms) { this->fade_ms_ = ms; }
+  void set_ambient_sensor(sensor::Sensor *s) { this->ambient_ = s; }
+  void set_ambient_range(float bright, float dark, float min_brightness) {
+    this->bright_value_ = bright;
+    this->dark_value_ = dark;
+    this->min_brightness_ = min_brightness;
+  }
+  void set_smoothing_ms(uint32_t ms) { this->smoothing_ms_ = ms; }
+  void set_auto_dim(bool on) { this->auto_dim_ = on; }
   void setup() override;
   void loop() override;
   void dump_config() override;
@@ -30,6 +40,13 @@ class AtmosLed : public Component, public light::LightOutput {
 
  protected:
   uint32_t target_() const;
+  float limit_(float level, float dt);
+  sensor::Sensor *ambient_{nullptr};
+  float bright_value_{0}, dark_value_{1}, min_brightness_{0.13f};
+  uint32_t smoothing_ms_{5000};
+  bool auto_dim_{true};
+  float raw_{NAN};       // latest ambient reading
+  float smooth_{NAN};    // smoothed ambient reading
   atmos::AtmosComponent *atmos_{nullptr};
   light::LightState *state_{nullptr};  // the strip
   light::LightState *own_{nullptr};    // this brightness-only light
@@ -41,6 +58,24 @@ class AtmosLed : public Component, public light::LightOutput {
   uint32_t last_ms_{0};
   uint32_t written_{0xFFFFFFFF};
   uint8_t written_brightness_{0};
+};
+
+/* Home Assistant switch for auto_dimming. */
+class AutoDimSwitch : public switch_::Switch, public Component {
+ public:
+  void set_parent(AtmosLed *parent) { this->parent_ = parent; }
+  void setup() override {
+    bool on = this->get_initial_state_with_restore_mode().value_or(true);
+    this->parent_->set_auto_dim(on);
+    this->publish_state(on);
+  }
+
+ protected:
+  void write_state(bool state) override {
+    this->parent_->set_auto_dim(state);
+    this->publish_state(state);
+  }
+  AtmosLed *parent_{nullptr};
 };
 
 }  // namespace esphome::atmos_led

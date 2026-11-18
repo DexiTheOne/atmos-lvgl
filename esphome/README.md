@@ -317,7 +317,7 @@ light:
     internal: true         # carries the colours only
     chipset: WS2812
     rgb_order: GRB
-    pin: GPIO1
+    pin: GPIO2
     num_leds: 4
     restore_mode: ALWAYS_ON
 
@@ -325,6 +325,14 @@ atmos_led:
   light_id: status_strip
   name: Status LEDs        # Home Assistant: power and a brightness slider
   fade_time: 500ms         # cross-fade when a rating changes on a still page
+  auto_dimming:            # optional: limit by ambient light
+    sensor: ldr_voltage    # any sensor; here an LDR (to GND) divider on an ADC
+    bright_value: 1.7      # at or beyond: the slider's brightness
+    dark_value: 3.1        # at or beyond: min_brightness
+    min_brightness: 13%    # WS2812s show no colour below about 13 %
+    smoothing: 5s
+    switch:
+      name: Status LED Auto Dimming
 
 atmos:
   ratings:
@@ -339,3 +347,10 @@ page's colour over the second. `atmos_led` is itself a brightness-only light (an
 light option, such as `default_transition_length` or `restore_mode`, applies), so Home
 Assistant shows power and a brightness slider and no colour controls. Keep the strip
 light `internal` and on: atmos_led holds it at full brightness.
+
+`auto_dimming` never changes the light entity, so Home Assistant's recorder sees only
+your own changes: the slider sets the maximum, reached at `bright_value`, and the output
+falls linearly to `min_brightness` at `dark_value` (either direction works). A slider set
+below `min_brightness` is not raised. On the device an LDR between GPIO3 and GND (fixed
+resistor to 3.3 V) read 0.05 V under a flashlight, 1.7 V in a lit room and the ADC's
+3.16 V ceiling in the dark (12 dB attenuation).
