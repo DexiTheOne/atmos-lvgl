@@ -15,7 +15,7 @@
 #define UI_FONT_VALUE_COMPACT 32
 #define UI_FONT_UNIT 16
 #define UI_FONT_SECONDARY 16
-#define UI_FONT_AXIS 12
+#define UI_FONT_AXIS 1 /* Not a pixel size: selects ui_chart_12 (Spleen 6x12), used for everything inside history charts. */
 #define UI_DETAIL_LABEL_Y 84
 #define UI_DETAIL_VALUE_Y 109
 #define UI_DETAIL_UNIT_Y 152

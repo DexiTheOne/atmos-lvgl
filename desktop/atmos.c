@@ -324,7 +324,7 @@ static void shown_widest(int key,int *digits,int *decimals){
     else{*digits=pressure_digits[pressure_unit];*decimals=pressure_decimals[pressure_unit];}
 }
 static const lv_font_t *dashboard_font(int size){
-    switch(size){case 12:return &ui_bold_12;case 112:return &ui_bold_112;case 96:return &ui_bold_96;case 80:return &ui_bold_80;case 72:return &ui_bold_72;case 64:return &ui_bold_64;
+    switch(size){case UI_FONT_AXIS:return &ui_chart_12;case 12:return &ui_bold_12;case 112:return &ui_bold_112;case 96:return &ui_bold_96;case 80:return &ui_bold_80;case 72:return &ui_bold_72;case 64:return &ui_bold_64;
     case 60:return &ui_bold_60;case 48:return &ui_bold_48;case 40:return &ui_bold_40;case 32:return &ui_bold_32;
     case 28:return &ui_bold_28;case 24:return &ui_bold_24;default:return &ui_bold_16;}
 }
@@ -630,7 +630,7 @@ static void chart_fill_span(int x,int top,int bottom){
 static int chart_left,chart_bottom,chart_tick_y;
 static void chart_geometry(void){
     static bool ready;if(ready)return;ready=true;
-    lv_area_t digits=header_ink_bounds("0123456789",&ui_bold_12),caption=header_ink_bounds("SEC AGO",&ui_bold_12);
+    lv_area_t digits=header_ink_bounds("0123456789",&ui_chart_12),caption=header_ink_bounds("SEC AGO",&ui_chart_12);
     int grow=digits.y2-digits.y1+1+UI_CHART_LABEL_GAP-(digits.y1-caption.y1);
     chart_left=UI_MARGIN+widest_number(4,false,UI_FONT_AXIS)+UI_CHART_TICK_LENGTH+UI_CHART_LABEL_GAP+1;
     chart_bottom=UI_CHART_BOTTOM+grow;chart_tick_y=UI_CHART_TICK_Y+grow;
@@ -644,7 +644,7 @@ static void chart_tick(float value,float y){
     /* Four glyphs at most, so labels clear the rotated unit caption. */
     if(fabs(value)>=10000)snprintf(label,sizeof label,"%.0fk",value/1000);
     else snprintf(label,sizeof label,fabs(value-round(value))>.01f && fabs(value)<100?"%.1f":"%.0f",value);
-    lv_area_t ink=header_ink_bounds(label,&ui_bold_12);
+    lv_area_t ink=header_ink_bounds(label,&ui_chart_12);
     dashboard_text(label,chart_left-UI_CHART_TICK_LENGTH-UI_CHART_LABEL_GAP-1-ink.x2,
         (int)round(y)-(ink.y2-ink.y1+1)/2-ink.y1,UI_FONT_AXIS,true);
     line(chart_left-UI_CHART_TICK_LENGTH,y,chart_left,y,1,true);
@@ -668,7 +668,7 @@ static void rendered_ink_x(const char *text,int *left,int *right){
     lv_draw_rect_dsc_t bg;lv_draw_rect_dsc_init(&bg);bg.bg_color=color(false);bg.bg_opa=255;
     lv_area_t full={0,0,AXIS_W-1,AXIS_H-1};lv_draw_rect(&text_layer,&bg,&full);
     lv_draw_label_dsc_t d;lv_draw_label_dsc_init(&d);
-    d.font=&ui_bold_12;d.text=text;d.text_local=1;d.color=color(true);
+    d.font=&ui_chart_12;d.text=text;d.text_local=1;d.color=color(true);
     lv_draw_label(&text_layer,&d,&full);
     lv_canvas_finish_layer(axis_label_canvas,&text_layer);
     *left=AXIS_W;*right=-1;
@@ -684,7 +684,7 @@ static void history_caption(double span){
     else if(span<90*60)snprintf(text,sizeof text,"LAST %d MIN",(int)lround(span/60));
     else snprintf(text,sizeof text,"LAST %d HRS",(int)lround(fmin(span/3600,9999)));
     int left,right;rendered_ink_x(text,&left,&right);
-    lv_area_t caps=header_ink_bounds("H",&ui_bold_12);
+    lv_area_t caps=header_ink_bounds("H",&ui_chart_12);
     int pad_y=UI_HISTORY_PILL_PADDING,pad_x=UI_HISTORY_PILL_PADDING+UI_HISTORY_PILL_PADDING_X;
     int w=right-left+1+2*pad_x+2,h=caps.y2-caps.y1+1+2*pad_y+2,x=UI_CHART_RIGHT+1-w,y=UI_CHART_TOP;
     pill(x,y,w,h,UI_HISTORY_PILL_RADIUS,true);
@@ -698,7 +698,7 @@ static void chart_axes(const char *name,const char *unit,float span){
     for(int i=0;i<=UI_CHART_X_INTERVALS;i++){
         int x=chart_left+i*(UI_CHART_RIGHT-chart_left)/UI_CHART_X_INTERVALS;
         char label[24];snprintf(label,sizeof label,"%.0f",span*(UI_CHART_X_INTERVALS-i)/UI_CHART_X_INTERVALS);
-        lv_area_t ink=header_ink_bounds(label,&ui_bold_12);
+        lv_area_t ink=header_ink_bounds(label,&ui_chart_12);
         if(span>0 || i==UI_CHART_X_INTERVALS)
             dashboard_text(label,x-(ink.x2-ink.x1+1)/2-ink.x1,chart_tick_y-ink.y1,UI_FONT_AXIS,true);
         line(x,chart_bottom,x,chart_bottom+UI_CHART_TICK_LENGTH,1,true);
@@ -981,6 +981,14 @@ static void pm_dot(int x,int y,float r){
 static float pm_wave(int64_t tick,int speed,int seed){
     return sinf(TAU*(float)((tick*speed+seed*997)%PM_DRIFT_TICKS)/PM_DRIFT_TICKS);
 }
+static int pm_value_center(void);static int pm_value_size(void);
+/* Dust stays UI_TEXT_GAP/2 right of the widest reading's ink, so a large
+   value font never meets a speck; the field is squeezed, not clipped. */
+static int pm_dust_left(void){
+    static int left=-1; /* fonts are fixed: measure once */
+    if(left<0)left=LV_MAX(UI_PM_FIELD_LEFT,pm_value_center()+(widest_number(4,true,pm_value_size())+1)/2+UI_TEXT_GAP/2);
+    return left;
+}
 static void pm_particle_field(void){
     if(pm_grid_count<0)pm_grid_build();
     for(int i=0;i<pm_grid_count;i++)rect(pm_grid_dots[i][0],pm_grid_dots[i][1],1,1,false,0);
@@ -1019,7 +1027,9 @@ static void pm_particle_field(void){
         int ri=(int)r;
         int sx=(int)lroundf(UI_PM_FIELD_CX+f*x/depth);
         int sy=(int)lroundf(UI_PM_HORIZON_Y+f*(UI_PM_CAMERA_HEIGHT-height)/depth);
-        sx=LV_CLAMP(UI_PM_FIELD_LEFT+ri,sx,UI_PM_FIELD_RIGHT-ri);
+        const int dust_left=pm_dust_left();
+        sx=dust_left+(sx-UI_PM_FIELD_LEFT)*(UI_PM_FIELD_RIGHT-dust_left)/(UI_PM_FIELD_RIGHT-UI_PM_FIELD_LEFT);
+        sx=LV_CLAMP(dust_left+ri,sx,UI_PM_FIELD_RIGHT-ri);
         sy=LV_CLAMP(UI_PM_FIELD_TOP+ri,sy,UI_PM_FIELD_BOTTOM-ri);
         pm_dot(sx,sy,r);
         pm_dust[pm_dust_count][0]=(int16_t)sx;pm_dust[pm_dust_count][1]=(int16_t)sy;

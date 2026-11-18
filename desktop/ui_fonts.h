@@ -13,3 +13,4 @@ LV_FONT_DECLARE(ui_bold_72);
 LV_FONT_DECLARE(ui_bold_80);
 LV_FONT_DECLARE(ui_bold_96);
 LV_FONT_DECLARE(ui_bold_112);
+LV_FONT_DECLARE(ui_chart_12);
