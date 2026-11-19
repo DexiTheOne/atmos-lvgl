@@ -65,7 +65,7 @@ CONFIG_SCHEMA = light.light_schema(
         # Cross-fade when the shown rating changes without a page transition.
         cv.Optional(CONF_FADE_TIME, default="500ms"): cv.positive_time_period_milliseconds,
         # Glow bouncing along the LEDs while the splash waits for the connection; "none" keeps them dark.
-        cv.Optional(CONF_BOOT_COLOR, default="#2080FF"): cv.Any(cv.one_of("none", lower=True), _rgb),
+        cv.Optional(CONF_BOOT_COLOR, default="#18BCF2"): cv.Any(cv.one_of("none", lower=True), _rgb),
         cv.Optional(CONF_AUTO_DIMMING): AUTO_DIMMING_SCHEMA,
     }
 ).extend(cv.COMPONENT_SCHEMA)

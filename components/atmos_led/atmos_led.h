@@ -61,7 +61,7 @@ class AtmosLed : public Component, public light::LightOutput {
   light::LightState *own_{nullptr};    // this brightness-only light
   light::AddressableLight *out_{nullptr};
   uint32_t fade_ms_{500};
-  uint32_t boot_color_{0x2080FF};
+  uint32_t boot_color_{0x18BCF2};
   float boot_k_[MAX_LEDS]{};  // each LED's boot intensity when last drawn
   bool boot_shown_{false};
   bool handed_off_{false};
