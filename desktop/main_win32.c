@@ -337,6 +337,20 @@ int main(int argc,char **argv){
         puts("Gases: real histories, motion, live endpoint, missing readings and forward/reverse travel captured.");
         lv_deinit();return 0;
     }
+    if(argc>1 && strcmp(argv[1],"--capture-comfort")==0){
+        /* The overview and climate page in every comfort band: temperature
+           Cold..Hot paired with humidity Dry..Damp, pressure Low/Normal/High. */
+        static const float temp[6]={12,17.5f,20,22.5f,25.5f,30},rh[6]={20,35,50,65,80,50},pa[6]={990,1013,1030,990,1013,1030};
+        atmos_toggle_auto();
+        for(int i=0;i<6;i++){
+            atmos_set_readings((atmos_readings){617,3,40,1,temp[i],rh[i],2,4,5,pa[i],12});
+            atmos_set_scene(0);for(int k=0;k<60;k++)advance();
+            char path[80];snprintf(path,sizeof path,"comfort-overview-%d.bmp",i);save_bmp(path);
+            atmos_set_scene(4);for(int k=0;k<60;k++)advance();
+            snprintf(path,sizeof path,"comfort-climate-%d.bmp",i);save_bmp(path);
+        }
+        lv_deinit();return 0;
+    }
     if(argc>1 && strcmp(argv[1],"--capture-climate")==0){
         atmos_toggle_auto();atmos_set_readings((atmos_readings){617,3,40,1,24.2,58,2,4,5,1013.2f,12});atmos_set_scene(4);
         for(int i=0;i<60;i++)advance();

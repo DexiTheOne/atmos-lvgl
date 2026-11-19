@@ -190,7 +190,7 @@ void AtmosComponent::publish_selection_() {
 void AtmosComponent::set_hold(float seconds) { atmos_set_hold(seconds); }
 void AtmosComponent::set_history_window(float seconds) { atmos_set_history_window(seconds); }
 
-void AtmosComponent::add_band(int reading, float min, float max, int level, const char *text, bool alert) {
+void AtmosComponent::add_band(int reading, float min, float max, int level, const char *text, bool alert, int mark) {
   static atmos_band bands[ATMOS_READINGS][ATMOS_BANDS_MAX];
   static int counts[ATMOS_READINGS];
   if (reading < 0 || reading >= ATMOS_READINGS || counts[reading] >= ATMOS_BANDS_MAX)
@@ -200,6 +200,8 @@ void AtmosComponent::add_band(int reading, float min, float max, int level, cons
   b.max = max;
   b.level = level;
   b.alert = alert;
+  b.has_color = false;
+  b.mark = mark;
   snprintf(b.text, sizeof b.text, "%s", text);
   atmos_set_bands(reading, bands[reading], counts[reading]);
 }
@@ -317,6 +319,9 @@ uint32_t AtmosComponent::led_color(int reading) const {
     return 0;
   if (this->band_colors_set_ && this->band_colors_[reading][band] >= 0)
     return (uint32_t) this->band_colors_[reading][band];
+  uint32_t rgb;
+  if (atmos_band_color(reading, &rgb))
+    return rgb;
   return level <= 0 ? 0x00FF00 : level == 1 ? 0xFF9000 : 0xFF0000;
 }
 

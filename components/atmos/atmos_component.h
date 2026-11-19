@@ -71,7 +71,7 @@ class AtmosComponent : public Component {
   void set_hold(float seconds);
   void set_history_window(float seconds);
   /* Rating band for a reading (atmos_band); bands for a reading are applied in order. */
-  void add_band(int reading, float min, float max, int level, const char *text, bool alert);
+  void add_band(int reading, float min, float max, int level, const char *text, bool alert, int mark = 0);
   /* Status LED colour (0xRRGGBB) of a reading's band, by its position in add_band() order. */
   void set_band_color(int reading, int band, uint32_t rgb);
   /* Colour of the band holding a reading's value: its led_color, else by level (0 green,

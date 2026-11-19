@@ -60,6 +60,9 @@ CONF_SENSORS = "sensors"
 CONF_SENSOR = "sensor"
 CONF_STARTUP_DELAY = "startup_delay"
 CONF_LED_COLOR = "led_color"
+CONF_MARKER = "marker"
+# Overview tile markers (atmos.h ATMOS_MARK_*): "level" picks check / ringed ! / triangle.
+MARKERS = {"level": 0, "check": 1, "snowflake": 2, "cool": 3, "sun": 4, "flame": 5, "dry": 6, "drop": 7, "drops": 8}
 
 
 def _rgb(value):
@@ -176,7 +179,9 @@ def _validate_bands(bands):
 
 # A band: the badge text for readings in [min, max) (either end may be left open).
 # The first matching band wins. level orders severity for the overview, which shows the
-# worst; level defaults to the band's position. alert (default: level 2 or more) raises
+# worst; level defaults to the band's position. Temperature, humidity and pressure are
+# comfort readings: they never alert and stay out of the overview's rating and LED.
+# alert (default: level 2 or more) raises
 # the overview's warning and the Alert active sensor, and with alert focus on,
 # automatic cycling shows only alerting readings.
 BAND_SCHEMA = cv.All(
@@ -191,6 +196,9 @@ BAND_SCHEMA = cv.All(
             # Status LED colour (atmos_led) while this band is shown; default by level:
             # 0 green, 1 amber, 2+ red. "#000000" turns the LEDs off.
             cv.Optional(CONF_LED_COLOR): _rgb,
+            # Overview tile marker: level (default), check, snowflake, cool, sun, flame,
+            # dry, drop, drops.
+            cv.Optional(CONF_MARKER, default="level"): cv.enum(MARKERS, lower=True),
         }
     ),
 )
@@ -322,7 +330,7 @@ async def to_code(config):
             if CONF_LED_COLOR in band:
                 cg.add(var.set_band_color(index, position, band[CONF_LED_COLOR]))
             lo, hi = band.get(CONF_MIN_VALUE), band.get(CONF_MAX_VALUE)
-            cg.add(var.add_band(index, nan if lo is None else lo, nan if hi is None else hi, band[CONF_LEVEL], band[CONF_TEXT], band[CONF_ALERT]))
+            cg.add(var.add_band(index, nan if lo is None else lo, nan if hi is None else hi, band[CONF_LEVEL], band[CONF_TEXT], band[CONF_ALERT], band[CONF_MARKER]))
     if conf := config.get(CONF_READING_SELECT):
         sel = await select.new_select(conf, options=["Auto Advance", "Overview"] + [name for _, name in READINGS])
         await cg.register_parented(sel, var)

@@ -1,4 +1,4 @@
-﻿#ifndef ATMOS_UI_THEME_H
+#ifndef ATMOS_UI_THEME_H
 #define ATMOS_UI_THEME_H
 /* Dashboard and CO2 typography use the shared DejaVu Sans Bold subset. */
 #define UI_WIDTH 400
@@ -330,13 +330,18 @@
 #define UI_VOC_POOR 250.0f
 #define UI_NOX_FAIR 20.0f    /* index */
 #define UI_NOX_POOR 150.0f
-#define UI_TEMP_GOOD_LOW 20.0f /* degC */
-#define UI_TEMP_GOOD_HIGH 25.0f
-#define UI_TEMP_FAIR_LOW 18.0f
-#define UI_TEMP_FAIR_HIGH 27.0f
-#define UI_RH_GOOD_LOW 40.0f /* % */
-#define UI_RH_GOOD_HIGH 60.0f
-#define UI_RH_FAIR_LOW 30.0f
-#define UI_RH_FAIR_HIGH 70.0f
+/* Comfort bands (temperature, humidity, pressure): they describe the room, not air
+   quality, so they never alert and stay out of the overview's rating and LED. */
+#define UI_TEMP_COLD 16.0f /* degC: Cold below, Cool, Mild, Comfy, Warm, Hot from UI_TEMP_HOT */
+#define UI_TEMP_COOL 19.0f
+#define UI_TEMP_MILD 21.0f
+#define UI_TEMP_WARM 24.0f
+#define UI_TEMP_HOT 27.0f
+#define UI_RH_DRY 30.0f /* %: Dry below, Fresh, Ideal, Humid, Damp from UI_RH_DAMP */
+#define UI_RH_IDEAL 40.0f
+#define UI_RH_HUMID 60.0f
+#define UI_RH_DAMP 70.0f
+#define UI_PRESSURE_LOW 1000.0f /* hPa (sea level): Low below, Normal, High from UI_PRESSURE_HIGH */
+#define UI_PRESSURE_HIGH 1025.0f
 #endif
 
