@@ -21,7 +21,8 @@ void atmos_set_splash_subtitle(const char *text);
 void atmos_step(double seconds);
 void atmos_navigate(int direction);
 /* Left/right hardware key: next/previous reading on the page. Right after a page's last
-   reading opens the overview, and from there the page after it; left steps back
+   reading opens the overview (once per run of presses: a hold without a
+   press re-arms it), and from there the page after it; left steps back
    through the readings, skipping the overview. */
 void atmos_advance(int direction);
 void atmos_set_scene(int scene);
@@ -124,7 +125,16 @@ float atmos_history_window(void);
    Readings with no matching band show "--". May be called before atmos_init(). */
 #define ATMOS_BANDS_MAX 8
 #define ATMOS_BAND_TEXT 16
-typedef struct { float min, max; int level; char text[ATMOS_BAND_TEXT]; bool alert; } atmos_band;
+/* has_color/color: the status LED colour (0xRRGGBB) for the band; without it the
+   device picks one by level. mark: the overview tile's marker (ATMOS_MARK_LEVEL: by
+   level, check / ringed ! / warning triangle). Temperature, humidity and pressure are
+   comfort readings: they never alert, whatever `alert` says, and stay out of the
+   overview's rating and LED colour. */
+enum { ATMOS_MARK_LEVEL, ATMOS_MARK_CHECK, ATMOS_MARK_SNOW, ATMOS_MARK_COOL, ATMOS_MARK_SUN,
+       ATMOS_MARK_FLAME, ATMOS_MARK_DRY, ATMOS_MARK_DROP, ATMOS_MARK_DROPS, ATMOS_MARKS };
+typedef struct { float min, max; int level; char text[ATMOS_BAND_TEXT]; bool alert; bool has_color; uint32_t color; int mark; } atmos_band;
+/* The LED colour set on the band currently holding a reading; false when none is set. */
+bool atmos_band_color(int reading, uint32_t *rgb);
 /* Returns false (and changes nothing) for a bad reading or more than ATMOS_BANDS_MAX bands. */
 bool atmos_set_bands(int reading, const atmos_band *bands, int n);
 int atmos_self_test(void);

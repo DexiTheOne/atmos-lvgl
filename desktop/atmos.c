@@ -74,6 +74,9 @@ static unsigned hold_items;
    the overview; dark_parked marks a park to undo when the room is lit again. */
 static int anchor=1;
 static bool low_light,overview_dark,dark_parked,dark_now,lit_wait;
+/* The right key detours through the overview once per run of presses; a hold
+   without a press ends the run. */
+static bool key_detoured;
 /* The first transition after a splash opens from it onto the first page. */
 static bool intro;
 static int pm_selected=1,pm_snapshot_count;
@@ -138,18 +141,31 @@ static float mix(float a,float b,float p){return a+(b-a)*p;}
    Missing readings have no rating. */
 #define OPEN NAN
 /* Poor (level 2 and above) alerts by default. */
-#define BAND(lo,hi,level,text) {lo,hi,level,text,(level)>=2}
+#define BAND(lo,hi,level,text) {lo,hi,level,text,(level)>=2,false,0,ATMOS_MARK_LEVEL}
+/* Comfort bands: a label, its LED colour and its overview marker; never alerting. */
+#define COMFORT(lo,hi,level,text,rgb,mark) {lo,hi,level,text,false,true,rgb,mark}
 #define UPPER(fair,poor) {BAND(OPEN,fair,0,"Good"),BAND(fair,poor,1,"Fair"),BAND(poor,OPEN,2,"Poor")},3
-#define RANGE(glo,ghi,flo,fhi) {BAND(glo,ghi,0,"Good"),BAND(flo,fhi,1,"Fair"),BAND(OPEN,OPEN,2,"Poor")},3
 static struct { atmos_band band[ATMOS_BANDS_MAX]; int n; } bands[ATMOS_READINGS]={
     [ATMOS_CO2]={UPPER(UI_CO2_FAIR,UI_CO2_POOR)},[ATMOS_VOC]={UPPER(UI_VOC_FAIR,UI_VOC_POOR)},
     [ATMOS_NOX]={UPPER(UI_NOX_FAIR,UI_NOX_POOR)},[ATMOS_HCHO]={UPPER(UI_HCHO_FAIR,UI_HCHO_POOR)},
     [ATMOS_PM1]={UPPER(UI_PM1_FAIR,UI_PM1_POOR)},[ATMOS_PM25]={UPPER(UI_PM25_FAIR,UI_PM25_POOR)},
     [ATMOS_PM4]={UPPER(UI_PM4_FAIR,UI_PM4_POOR)},[ATMOS_PM10]={UPPER(UI_PM10_FAIR,UI_PM10_POOR)},
-    [ATMOS_TEMPERATURE]={RANGE(UI_TEMP_GOOD_LOW,UI_TEMP_GOOD_HIGH,UI_TEMP_FAIR_LOW,UI_TEMP_FAIR_HIGH)},
-    [ATMOS_HUMIDITY]={RANGE(UI_RH_GOOD_LOW,UI_RH_GOOD_HIGH,UI_RH_FAIR_LOW,UI_RH_FAIR_HIGH)},
-    /* Pressure is weather, not air quality: it has no warning band. */
-    [ATMOS_PRESSURE]={{BAND(OPEN,OPEN,0,"Good")},1},
+    /* Comfort: temperature from blue to orange, humidity from sand through green to
+       deep teal, pressure in sky whites. */
+    [ATMOS_TEMPERATURE]={{COMFORT(OPEN,UI_TEMP_COLD,2,"Cold",0x2050FF,ATMOS_MARK_SNOW),
+        COMFORT(UI_TEMP_COLD,UI_TEMP_COOL,1,"Cool",0x40A0FF,ATMOS_MARK_COOL),
+        COMFORT(UI_TEMP_COOL,UI_TEMP_MILD,0,"Mild",0xA0E0FF,ATMOS_MARK_CHECK),
+        COMFORT(UI_TEMP_MILD,UI_TEMP_WARM,0,"Comfy",0xFFE8C0,ATMOS_MARK_CHECK),
+        COMFORT(UI_TEMP_WARM,UI_TEMP_HOT,1,"Warm",0xFFA030,ATMOS_MARK_SUN),
+        COMFORT(UI_TEMP_HOT,OPEN,2,"Hot",0xFF5000,ATMOS_MARK_FLAME)},6},
+    [ATMOS_HUMIDITY]={{COMFORT(OPEN,UI_RH_DRY,1,"Dry",0xFFC060,ATMOS_MARK_DRY),
+        COMFORT(UI_RH_DRY,UI_RH_IDEAL,0,"Fresh",0xB0FF90,ATMOS_MARK_CHECK),
+        COMFORT(UI_RH_IDEAL,UI_RH_HUMID,0,"Ideal",0x40FF60,ATMOS_MARK_CHECK),
+        COMFORT(UI_RH_HUMID,UI_RH_DAMP,1,"Humid",0x20E0C0,ATMOS_MARK_DROP),
+        COMFORT(UI_RH_DAMP,OPEN,2,"Damp",0x0080C0,ATMOS_MARK_DROPS)},5},
+    [ATMOS_PRESSURE]={{COMFORT(OPEN,UI_PRESSURE_LOW,0,"Low",0x8090B0,ATMOS_MARK_CHECK),
+        COMFORT(UI_PRESSURE_LOW,UI_PRESSURE_HIGH,0,"Normal",0xE0E8FF,ATMOS_MARK_CHECK),
+        COMFORT(UI_PRESSURE_HIGH,OPEN,0,"High",0xFFFFFF,ATMOS_MARK_CHECK)},3},
 };
 static float reading_value(int r){
     switch(r){
@@ -190,13 +206,15 @@ bool atmos_set_bands(int reading,const atmos_band *band,int n){
     return true;
 }
 static rating rate_co2(void){return rate(ATMOS_CO2);}
-/* Overview: the worst-level rating among all readings. */
+/* Comfort readings describe the room, not air quality: no alerts, no overview rating. */
+static bool comfort_reading(int r){return r==ATMOS_TEMPERATURE || r==ATMOS_HUMIDITY || r==ATMOS_PRESSURE;}
+/* Overview: the worst-level rating among the air-quality readings. */
 static rating rate_overall(void){
     rating worst=NULL;
-    for(int i=0;i<ATMOS_READINGS;i++){rating r=rate(i);if(r && (!worst || r->level>worst->level))worst=r;}
+    for(int i=0;i<ATMOS_READINGS;i++){if(comfort_reading(i))continue;rating r=rate(i);if(r && (!worst || r->level>worst->level))worst=r;}
     return worst;
 }
-static bool alerting(int r){rating b=rate(r);return b && b->alert;}
+static bool alerting(int r){if(comfort_reading(r))return false;rating b=rate(r);return b && b->alert;}
 static bool warning(void){for(int i=0;i<ATMOS_READINGS;i++)if(alerting(i))return true;return false;}
 /* Alert hysteresis (atmos_set_alert_times()): a reading joins the debounced alert set
    after alerting continuously for alert_enter seconds and leaves it after
@@ -504,7 +522,24 @@ static bool ring_ink(float px,float py,float cx,float cy,float r,float w){
     float d=(px-cx)*(px-cx)+(py-cy)*(py-cy);return d<=r*r && d>(r-w)*(r-w);
 }
 enum{ICON_CO2,ICON_VOC,ICON_NOX,ICON_HCHO,ICON_PM25,ICON_PM10,ICON_TEMP,ICON_RH,
-     MARK_GOOD,MARK_FAIR,MARK_POOR};
+     MARK_GOOD,MARK_FAIR,MARK_POOR,MARK_SNOW,MARK_COOL,MARK_SUN,MARK_FLAME,MARK_DRY,MARK_DROP,MARK_DROPS,MARK_LAST=MARK_DROPS};
+/* A water drop: round base (centre cx,cy, radius r) narrowing to a tip at tip_y. */
+static bool drop_ink(float px,float py,float cx,float tip_y,float cy,float r){
+    return disc_ink(px,py,cx,cy,r)||(py>=tip_y && py<=cy && fabsf(px-cx)<=(py-tip_y)/(cy-tip_y)*r*.92f);
+}
+/* Comfort markers too fine for sampled shapes at this size, drawn on the pixel grid
+   (13 x 13, '#' ink): cold snowflake, cool star, warm sun, hot flame. */
+static const char *const comfort_mark_bits[4][13]={
+    {"......#......",".....###.....","..#...#...#..","...#..#..#...","....#.#.#....",".#...###...#.",
+     "#############",".#...###...#.","....#.#.#....","...#..#..#...","..#...#...#..",".....###.....","......#......"},
+    {".............","......#......","......#......","...#..#..#...","....#.#.#....",".....###.....",
+     ".###########.",".....###.....","....#.#.#....","...#..#..#...","......#......","......#......","............."},
+    {"......#......","......#......","..#.......#..","...#.###.#...","....#####....","...#######...",
+     "##.#######.##","...#######...","....#####....","...#.###.#...","..#.......#..","......#......","......#......"},
+    {"......#......","......##.....",".....###.....",".....####....","....#####..#.","...######.##.",
+     "..##########.","..#####.####.",".#####...####",".####.....###",".####.....###","..####...###.","...#########."},
+};
+static bool comfort_bit(int m,int x,int y){return x>=0 && x<13 && y>=0 && y<13 && comfort_mark_bits[m][y][x]=='#';}
 static bool icon_ink(int kind,int x,int y){
     float px=x+.5f,py=y+.5f;
     switch(kind){
@@ -534,6 +569,12 @@ static bool icon_ink(int kind,int x,int y){
     /* The check spans the same height as the other markers. */
     case MARK_GOOD: return seg_ink(px,py,1.8f,7.5f,5.2f,11.8f,1.3f)||seg_ink(px,py,5.2f,11.8f,12.2f,1.8f,1.3f);
     case MARK_FAIR: return ring_ink(px,py,7.0f,7.0f,6.5f,1.5f)||seg_ink(px,py,7.0f,3.5f,7.0f,7.5f,1.0f)||disc_ink(px,py,7.0f,10.3f,1.1f);
+    /* Comfort markers: cold snowflake, cool thin snowflake, warm sun, hot flame,
+       dry outlined drop, humid drop, damp two drops. */
+    case MARK_SNOW: case MARK_COOL: case MARK_SUN: case MARK_FLAME: return comfort_bit(kind-MARK_SNOW,x,y);
+    case MARK_DRY: return drop_ink(px,py,7.0f,.5f,8.8f,4.7f) && !drop_ink(px,py,7.0f,3.2f,8.8f,3.1f);
+    case MARK_DROP: return drop_ink(px,py,7.0f,.5f,8.8f,4.7f);
+    case MARK_DROPS: return drop_ink(px,py,4.0f,.5f,6.0f,3.2f)||drop_ink(px,py,10.2f,5.3f,10.6f,3.0f);
     default:{ /* Poor: a solid warning triangle with a paper exclamation mark. */
         bool tri=py>=.5f && py<=13.5f && fabsf(px-7.0f)<=(py-.5f)*7.0f/13.0f;
         bool mark=seg_ink(px,py,7.0f,5.0f,7.0f,8.5f,1.0f)||disc_ink(px,py,7.0f,11.2f,1.1f);
@@ -579,9 +620,9 @@ static int tile_value_size(void){
 /* Ink bounds of each icon and marker, measured once: the shapes are fixed, so their
    ink is their permanent boundary for layout. */
 static lv_area_t icon_ink_box(int kind){
-    static lv_area_t box[MARK_POOR+1];static bool measured;
+    static lv_area_t box[MARK_LAST+1];static bool measured;
     if(!measured){
-        for(int k=0;k<=MARK_POOR;k++){
+        for(int k=0;k<=MARK_LAST;k++){
             int size=k<MARK_GOOD?UI_TILE_ICON:UI_TILE_MARK;lv_area_t a={size,size,-1,-1};
             for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(icon_ink(k,x,y)){
                 a.x1=LV_MIN(a.x1,x);a.x2=LV_MAX(a.x2,x);a.y1=LV_MIN(a.y1,y);a.y2=LV_MAX(a.y2,y);
@@ -640,7 +681,7 @@ static void draw_dashboard(void){
     for(int i=0;i<UI_TILE_COUNT;i++){
         int it,ny,t0,t1;tile_head(&overview_tiles[i],&it,&ny,&t0,&t1);h[0]=LV_MAX(h[0],t1-t0+1);
     }
-    for(int k=MARK_GOOD;k<=MARK_POOR;k++)h[3]=LV_MAX(h[3],area_h(icon_ink_box(k)));
+    for(int k=MARK_GOOD;k<=MARK_LAST;k++)h[3]=LV_MAX(h[3],area_h(icon_ink_box(k)));
     int free=row_h-h[0]-h[1]-h[2]-h[3],gap=free/5,pad=gap+(free-5*gap)/2;
     for(int i=0;i<UI_TILE_COUNT;i++){
         const overview_tile_t *tile=&overview_tiles[i];
@@ -666,7 +707,9 @@ static void draw_dashboard(void){
         centered_text(unit,mid,slot[2]-units.y1,UI_FONT_UNIT,false);
         rating b=rate(tile->reading);
         if(b){
-            int kind=b->level<=0?MARK_GOOD:b->level==1?MARK_FAIR:MARK_POOR;
+            static const int marks[ATMOS_MARKS]={0,MARK_GOOD,MARK_SNOW,MARK_COOL,MARK_SUN,MARK_FLAME,MARK_DRY,MARK_DROP,MARK_DROPS};
+            int kind=b->mark>ATMOS_MARK_LEVEL && b->mark<ATMOS_MARKS?marks[b->mark]:
+                b->level<=0?MARK_GOOD:b->level==1?MARK_FAIR:MARK_POOR;
             lv_area_t m=icon_ink_box(kind);
             /* Centred on its own ink, both ways, in the markers' shared row. */
             draw_icon(kind,mid-(m.x1+m.x2+1)/2,slot[3]+(h[3]-area_h(m))/2-m.y1,UI_TILE_MARK);
@@ -2289,7 +2332,7 @@ void atmos_init(void){
     axis_label_canvas=lv_canvas_create(lv_screen_active());
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
-    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=anchor=CYCLE_FIRST;dark_parked=dark_now=lit_wait=false;queued=-1;pending_advance=0;hold_items=0;
+    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=anchor=CYCLE_FIRST;dark_parked=dark_now=lit_wait=key_detoured=false;queued=-1;pending_advance=0;hold_items=0;
     memset(alert_on,0,sizeof alert_on);for(int r=0;r<ATMOS_READINGS;r++)alert_since[r]=t;
     cycle_alerting=false;event_count=0;
     pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=chart_rise_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;underline_age=UI_UNDERLINE_TIME;underline_from=-1;underline_from_end=1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
@@ -2451,6 +2494,7 @@ void atmos_step(double dt){
             if(item>auto_selected(scene))auto_select(scene,item);
         }
         prerender_step();
+        if(age>=hold)key_detoured=false;
         if(dark_mode() && scene==0){dark_now=lit_wait=false;dark_parked=true;}
         if(dark_mode() && scene!=0 && !automatic && (dark_now || age>=hold)){
             /* Without cycling: park at once on low light, and again one hold after a
@@ -2505,7 +2549,8 @@ void atmos_advance(int direction){
     /* Forward, every page's last reading leads to the overview, and the overview to
        the page after its anchor. Back always steps to the previous reading, from the
        overview the anchor's last. */
-    int to=direction>0?(scene==0?cycle_next(anchor,1):0):scene==0?anchor:cycle_next(scene,-1);
+    int to=direction>0?(scene==0?cycle_next(anchor,1):key_detoured?cycle_next(scene,1):0):scene==0?anchor:cycle_next(scene,-1);
+    if(to==0)key_detoured=true;
     if(to!=scene)auto_select(to,direction>0?0:auto_items(to)-1);
     age=0;atmos_set_scene(to);
 }
@@ -2615,11 +2660,17 @@ int atmos_band_level(int r){
     if(r<0 || r>=ATMOS_READINGS)return -1;
     rating b=rate(r);return b?b->level:-1;
 }
+bool atmos_band_color(int r,uint32_t *rgb){
+    if(r<0 || r>=ATMOS_READINGS)return false;
+    rating b=rate(r);if(!b || !b->has_color)return false;
+    if(rgb)*rgb=b->color&0xFFFFFFu;
+    return true;
+}
 int atmos_led_reading(int s){
     if(s<0 || s>=ATMOS_SCENES)return -1;
     if(s==0){
         int worst=-1;
-        for(int r=0;r<ATMOS_READINGS;r++){int l=atmos_band_level(r);if(l>=0 && (worst<0 || l>atmos_band_level(worst)))worst=r;}
+        for(int r=0;r<ATMOS_READINGS;r++){if(comfort_reading(r))continue;int l=atmos_band_level(r);if(l>=0 && (worst<0 || l>atmos_band_level(worst)))worst=r;}
         return worst;
     }
     int item=auto_selected(s);
@@ -2629,6 +2680,15 @@ int atmos_led_reading(int s){
 int atmos_step_prerendered(void){return prerendered_last_step;}
 int atmos_self_test(void){
     if(count!=0)return 1;
+    for(int r=0;r<ATMOS_READINGS;r++)for(int i=0;i<bands[r].n;i++)
+        if(ink_width(bands[r].band[i].text,16)>UI_RATING_W-6){fprintf(stderr,"band text too wide: %s\n",bands[r].band[i].text);return 1;}
+    {
+        /* Comfort readings never alert and stay out of the overview's rating. */
+        float t=sensor.temp;sensor.temp=40.0f;
+        bool ok=!alerting(ATMOS_TEMPERATURE) && rate_overall()!=rate(ATMOS_TEMPERATURE) && atmos_led_reading(0)!=ATMOS_TEMPERATURE;
+        sensor.temp=t;
+        if(!ok)return 1;
+    }
     /* Display units convert only what is drawn; bands and history stay SI. */
     {
         float before=reading_value(ATMOS_TEMPERATURE);
@@ -2732,7 +2792,7 @@ int atmos_self_test(void){
         atmos_set_history_window(120);
         for(int i=0;i<1300;i++)atmos_step(.1f);
         if(count<60 || count>62)return 33;
-        atmos_band custom[2]={{NAN,500,0,"Fine",false},{500,NAN,3,"Terrible",true}};
+        atmos_band custom[2]={BAND(NAN,500,0,"Fine"),{500,NAN,3,"Terrible",true,false,0,0}};
         atmos_band saved[ATMOS_BANDS_MAX];int saved_n=bands[ATMOS_CO2].n;memcpy(saved,bands[ATMOS_CO2].band,sizeof saved);
         if(!atmos_set_bands(ATMOS_CO2,custom,2) || atmos_set_bands(ATMOS_CO2,custom,ATMOS_BANDS_MAX+1))return 34;
         if(strcmp(rating_text(rate_co2()),sensor.co2<500?"Fine":"Terrible"))return 35;
@@ -2792,7 +2852,7 @@ int atmos_self_test(void){
         if(moving || scene!=1)return 49;
         HOLD_END();atmos_step(.05f);SETTLE();if(scene!=cycle_next(1,1))return 50;
         /* A Fair band flagged alert raises the alert and the overview warning. */
-        atmos_band fair[2]={{NAN,800,0,"Good",false},{800,NAN,1,"Fair",true}};
+        atmos_band fair[2]={BAND(NAN,800,0,"Good"),{800,NAN,1,"Fair",true,false,0,0}};
         atmos_band saved[ATMOS_BANDS_MAX];int saved_n=bands[ATMOS_CO2].n;memcpy(saved,bands[ATMOS_CO2].band,sizeof saved);
         atmos_set_bands(ATMOS_CO2,fair,2);
         v=calm;v.co2=900;atmos_set_readings(v);
@@ -2855,7 +2915,12 @@ int atmos_self_test(void){
         atmos_advance(1);SETTLE();if(scene!=0 || anchor!=1)return 60;
         atmos_advance(1);SETTLE();if(scene!=3 || gas_selected!=0)return 61;
         atmos_advance(1);if(scene!=3 || gas_selected!=1)return 61;
-        atmos_advance(1);SETTLE();if(scene!=0)return 62;
+        /* Once per run of presses: the next page end goes straight on. */
+        atmos_advance(1);SETTLE();if(scene!=5)return 62;
+        /* After a hold without a press, the detour is offered again. */
+        for(int i=0;i<4000 && age<hold+.1f;i++)atmos_step(.025f);
+        atmos_advance(-1);SETTLE();atmos_advance(-1);if(scene!=3 || gas_selected!=0)return 62;
+        atmos_advance(1);atmos_advance(1);SETTLE();if(scene!=0)return 62;
         /* Left from the overview: the anchor's last reading; left never visits it. */
         atmos_advance(-1);SETTLE();if(scene!=3 || gas_selected!=1)return 63;
         atmos_advance(-1);atmos_advance(-1);SETTLE();if(scene!=1)return 63;
