@@ -245,7 +245,7 @@ CONFIG_SCHEMA = cv.Schema(
         ).extend(cv.COMPONENT_SCHEMA),
         # Low light (atmos_led auto_dimming's ambient sensor) parks the display on the
         # overview: at the next hold end while cycling, at once otherwise; lit again,
-        # it resumes at once. Alerts do not override it. Low light always mutes alert sounds.
+        # it resumes after one hold. Alerts do not override it. Low light always mutes alert sounds.
         cv.Optional(CONF_OVERVIEW_LOW_LIGHT): switch.switch_schema(
             AtmosAlertSwitch,
             default_restore_mode="RESTORE_DEFAULT_OFF",

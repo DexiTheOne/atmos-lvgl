@@ -74,7 +74,7 @@ void atmos_select_overview(void);
    announced once it is lit again). With atmos_set_overview_dark() on it also parks on
    the overview: at the next hold end while cycling, at once otherwise, and again one
    hold after a manual visit; alerts do not override it. Lit again, the display leaves
-   at once, for the page after the last page shown (cycling) or that page itself. */
+   one hold later, for the page after the last page shown (cycling) or that page itself. */
 void atmos_set_low_light(bool dark);
 bool atmos_low_light(void);
 void atmos_set_overview_dark(bool on);

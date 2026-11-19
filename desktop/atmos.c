@@ -73,7 +73,7 @@ static unsigned hold_items;
    ambient sensor) mutes alert sounds and, with overview_dark on, parks the display on
    the overview; dark_parked marks a park to undo when the room is lit again. */
 static int anchor=1;
-static bool low_light,overview_dark,dark_parked,dark_now;
+static bool low_light,overview_dark,dark_parked,dark_now,lit_wait;
 /* The first transition after a splash opens from it onto the first page. */
 static bool intro;
 static int pm_selected=1,pm_snapshot_count;
@@ -2289,7 +2289,7 @@ void atmos_init(void){
     axis_label_canvas=lv_canvas_create(lv_screen_active());
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
-    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=anchor=CYCLE_FIRST;dark_parked=dark_now=false;queued=-1;pending_advance=0;hold_items=0;
+    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=anchor=CYCLE_FIRST;dark_parked=dark_now=lit_wait=false;queued=-1;pending_advance=0;hold_items=0;
     memset(alert_on,0,sizeof alert_on);for(int r=0;r<ATMOS_READINGS;r++)alert_since[r]=t;
     cycle_alerting=false;event_count=0;
     pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=chart_rise_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;underline_age=UI_UNDERLINE_TIME;underline_from=-1;underline_from_end=1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
@@ -2451,16 +2451,20 @@ void atmos_step(double dt){
             if(item>auto_selected(scene))auto_select(scene,item);
         }
         prerender_step();
-        if(dark_mode() && scene==0){dark_now=false;dark_parked=true;}
+        if(dark_mode() && scene==0){dark_now=lit_wait=false;dark_parked=true;}
         if(dark_mode() && scene!=0 && !automatic && (dark_now || age>=hold)){
             /* Without cycling: park at once on low light, and again one hold after a
                manual visit. */
             dark_now=false;dark_parked=true;atmos_set_scene(0);
         }else if(dark_parked && !dark_mode() && scene==0){
-            /* Lit again: resume at once, cycling on with the page after the anchor. */
-            dark_parked=false;
-            int to=automatic?auto_next(0):anchor;
-            auto_select(to,lowest_item(page_items(to)));atmos_set_scene(to);
+            /* Lit again: one more hold, then resume, cycling on with the page after
+               the anchor, otherwise the anchor. */
+            if(!lit_wait){lit_wait=true;age=0;}
+            else if(age>=hold){
+                dark_parked=lit_wait=false;
+                int to=automatic?auto_next(0):anchor;
+                auto_select(to,lowest_item(page_items(to)));atmos_set_scene(to);
+            }
         }else if(automatic && age>=hold){
             announce_cycle();
             int to=auto_next(scene);
@@ -2872,15 +2876,19 @@ int atmos_self_test(void){
         /* A manual visit in the dark returns after one hold. */
         atmos_advance(1);SETTLE();if(scene==0)return 70;
         HOLD_END();SETTLE();if(scene!=0)return 70;
-        /* Lit again: leaves at once for the page after the anchor (the alert page here). */
+        /* Lit again: leaves after one hold for the page after the anchor (the alert page here). */
         int a=anchor;atmos_set_low_light(false);atmos_step(.025f);
+        for(int i=0;i<(int)(hold/.025f)-4;i++){atmos_step(.025f);if(moving)return 71;}
+        for(int i=0;i<12 && !moving;i++)atmos_step(.025f);
         if(!moving || destination!=auto_next(0) || destination==a)return 71;
         SETTLE();
         /* Without cycling: parks at once, returns to the anchor at once. */
         automatic=false;alert_focus=alert_sound=false;cycle_alerting=false;event_count=0;
         atmos_set_readings(saved_sensor);
         a=scene;atmos_set_low_light(true);atmos_step(.025f);if(!moving || destination!=0)return 72;
-        SETTLE();atmos_set_low_light(false);atmos_step(.025f);SETTLE();if(scene!=a)return 73;
+        SETTLE();atmos_set_low_light(false);atmos_step(.025f);
+        for(int i=0;i<(int)(hold/.025f)+8 && !moving;i++)atmos_step(.025f);
+        SETTLE();if(scene!=a)return 73;
         /* A user-chosen overview stays when lit if it was not parked. */
         atmos_set_overview_dark(false);atmos_select_overview();SETTLE();
         for(int i=0;i<400;i++){atmos_step(.025f);}
@@ -2890,7 +2898,7 @@ int atmos_self_test(void){
         #undef SETTLE
         #undef HOLD_END
     }
-    puts("Overview detour: right key via the overview, left skipping it, cycle resuming after the anchor; low light parks (cycling and not), ignores alerts, mutes sounds, and resumes at once when lit.");
+    puts("Overview detour: right key via the overview, left skipping it, cycle resuming after the anchor; low light parks (cycling and not), ignores alerts, mutes sounds, and resumes one hold after it is lit.");
     puts("Alert focus: single page, in-page stepping, two-page alternation, return after a manual visit, full hold on clearing and alert-flagged bands passed.");
     puts("Alert hysteresis and sounds: flicker ignored, START/CLEAR once at the cycle change, cooldown, focus off and sounds off silent passed.");
     puts("Controls: reading selection, hold bound, history span shrink/grow, fast fill of long spans and rating bands passed.");
