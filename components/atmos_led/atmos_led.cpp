@@ -36,11 +36,18 @@ float AtmosLed::limit_(float level, float dt) {
     this->smooth_ += (this->raw_ - this->smooth_) * (k > 1.0f ? 1.0f : k);
   } else
     this->smooth_ = this->raw_;
-  if (!this->auto_dim_ || level <= this->min_brightness_)
-    return level;
   float span = this->dark_value_ - this->bright_value_;
   float f = span != 0.0f ? (this->dark_value_ - this->smooth_) / span : 1.0f;  // 1 bright, 0 dark
   f = f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f;
+  // Low light for the UI (overview in low light, muted alert sounds), whatever the
+  // auto-dimming switch: dark within 10 % of dark_value, lit again from 30 %.
+  bool dark = this->low_light_ ? f < 0.3f : f <= 0.1f;
+  if (dark != this->low_light_) {
+    this->low_light_ = dark;
+    atmos_set_low_light(dark);
+  }
+  if (!this->auto_dim_ || level <= this->min_brightness_)
+    return level;
   return this->min_brightness_ + (level - this->min_brightness_) * f;
 }
 

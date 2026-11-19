@@ -157,6 +157,8 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key=='W')atmos_set_wifi(atmos_wifi()<=-1?3:atmos_wifi()-1); /* 3, 2, 1, 0, off */
         else if(key=='U')atmos_set_temperature_unit(!atmos_temperature_unit()); /* C, F */
         else if(key=='I')atmos_set_pressure_unit((atmos_pressure_unit()+1)%4); /* hPa, kPa, mmHg, inHg */
+        else if(key=='L'){atmos_set_low_light(!atmos_low_light());update_title();}
+        else if(key=='O'){atmos_set_overview_dark(!atmos_overview_dark());update_title();}
         else if(key=='H'){hw_pace=!hw_pace;update_title();}
         else if(key=='S')save_bmp("atmos-frame.bmp");
         else if(key=='R')reboot();
@@ -215,9 +217,10 @@ static void play_alert_events(void){
 }
 static void update_title(void){
     if(!window)return;
-    char title[200];
-    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | P alert focus%s | M sound%s | W wifi | H hw pace | S save | R reboot",
-        hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"",atmos_alert_focus()?" ON":"",atmos_alert_sound()?" ON":"");
+    char title[320];
+    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | P alert focus%s | M sound%s | L low light%s | O overview in low light%s | W wifi | H hw pace | S save | R reboot",
+        hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"",atmos_alert_focus()?" ON":"",atmos_alert_sound()?" ON":"",
+        atmos_low_light()?" ON":"",atmos_overview_dark()?" ON":"");
     SetWindowText(window,title);
 }
 int main(int argc,char **argv){
@@ -239,6 +242,8 @@ int main(int argc,char **argv){
             for(int u=0;u<4;u++)if(_stricmp(argv[i]+16,names[u])==0)atmos_set_pressure_unit(u);
         }
         else if(strcmp(argv[i],"--alert-focus")==0)atmos_set_alert_focus(true);
+        else if(strcmp(argv[i],"--overview-dark")==0)atmos_set_overview_dark(true);
+        else if(strcmp(argv[i],"--low-light")==0)atmos_set_low_light(true);
         else if(strncmp(argv[i],"--paper=",8)==0){if(!parse_rgb(argv[i]+8,&paper_rgb)){fprintf(stderr,"Bad --paper\n");return 2;}}
         else argv[kept++]=argv[i];
     }
@@ -524,6 +529,21 @@ int main(int argc,char **argv){
                 }
                 char path[80];snprintf(path,sizeof path,"scenario-%d-scene-%d.bmp",scenario,screen);save_bmp(path);
                 if(verify_presentation()){fprintf(stderr,"Windows presentation test failed\n");return 12;}
+            }
+        }
+        /* The overview's exits: each page from the overview (icon handoff). */
+        for(int screen=1;screen<ATMOS_SCENES;screen++){
+            atmos_set_scene(atmos_page(0));
+            for(int i=0;i<72;i++)advance();
+            atmos_set_scene(atmos_page(screen));
+            for(int i=0;i<72;i++){
+                advance();
+                const uint8_t *composed=atmos_transition_frame();
+                if(composed && memcmp(composed,frame_bits,sizeof frame_bits)){fprintf(stderr,"Transition frame mismatch\n");return 29;}
+                if(capture && i%8==0){
+                    char path[100];snprintf(path,sizeof path,"overview-to-%d-frame-%02d.bmp",screen,i);
+                    save_bmp(path);
+                }
             }
         }
         for(int screen=ATMOS_SCENES-1;screen>=0;screen--){

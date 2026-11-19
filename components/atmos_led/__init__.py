@@ -11,6 +11,9 @@ limits the LEDs without changing the light entity's brightness, so Home Assistan
 recorder sees only user changes. The user's brightness is the maximum (reached at
 bright_value and beyond); the output falls linearly to min_brightness at dark_value.
 The reading is smoothed over smoothing. An optional switch turns it on and off.
+The same smoothed reading reports low light to the UI (within 10 % of dark_value,
+lit again from 30 %), whatever the switch: it mutes alert sounds and drives the
+atmos overview_low_light option.
 """
 
 import esphome.codegen as cg

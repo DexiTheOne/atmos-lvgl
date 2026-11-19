@@ -48,6 +48,7 @@ class AtmosLed : public Component, public light::LightOutput {
   bool auto_dim_{true};
   float raw_{NAN};       // latest ambient reading
   float smooth_{NAN};    // smoothed ambient reading
+  bool low_light_{false};  // reported to the UI with hysteresis
   atmos::AtmosComponent *atmos_{nullptr};
   light::LightState *state_{nullptr};  // the strip
   light::LightState *own_{nullptr};    // this brightness-only light

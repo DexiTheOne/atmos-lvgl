@@ -20,7 +20,9 @@ void atmos_show_splash(const char *name);
 void atmos_set_splash_subtitle(const char *text);
 void atmos_step(double seconds);
 void atmos_navigate(int direction);
-/* Left/right hardware key: next/previous reading on the page, then the next/previous page. */
+/* Left/right hardware key: next/previous reading on the page. Right after a page's last
+   reading opens the overview, and from there the page after it; left steps back
+   through the readings, skipping the overview. */
 void atmos_advance(int direction);
 void atmos_set_scene(int scene);
 /* Scene number at a page position (0 = overview, then CO2, gases, formaldehyde,
@@ -65,6 +67,18 @@ void atmos_set_startup_delay(int reading, bool on);
 void atmos_select_reading(int reading);
 /* The reading currently underlined/charted (the destination's while moving). */
 int atmos_reading(void);
+/* Show the overview (a detour from the cycle; see atmos_advance()). Restarts the hold;
+   with cycling on, the hold ends on the page after the last page shown. */
+void atmos_select_overview(void);
+/* Low light, from the device's ambient sensor. Mutes alert sounds (a cycle change is
+   announced once it is lit again). With atmos_set_overview_dark() on it also parks on
+   the overview: at the next hold end while cycling, at once otherwise, and again one
+   hold after a manual visit; alerts do not override it. Lit again, the display leaves
+   at once, for the page after the last page shown (cycling) or that page itself. */
+void atmos_set_low_light(bool dark);
+bool atmos_low_light(void);
+void atmos_set_overview_dark(bool on);
+bool atmos_overview_dark(void);
 void atmos_set_auto(bool on);
 bool atmos_auto(void);
 /* Alert focus: while any reading's band has alert set, automatic cycling visits only

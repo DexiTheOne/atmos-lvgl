@@ -114,6 +114,8 @@ atmos:
   # leave it after alert_leave clear; badges still show the live rating.
   alert_sound:
     name: Alert Sound
+  overview_low_light:  # park on the overview in low light (atmos_led auto_dimming sensor)
+    name: Overview in Low Light
   alert_enter: 60s
   alert_leave: 3min
   alert_sound_cooldown: 20min  # no repeat sound this soon after a clear

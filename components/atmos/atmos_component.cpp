@@ -101,7 +101,9 @@ void AtmosComponent::wait_ready_() {
   this->started_ = true;
   this->ui_ms_ = millis();
   atmos_set_auto(this->auto_);
-  if (this->pending_reading_ >= 0)
+  if (this->pending_reading_ == OVERVIEW)
+    atmos_select_overview();
+  else if (this->pending_reading_ >= 0)
     atmos_select_reading(this->pending_reading_);
   this->last_report_ms_ = millis();
   ESP_LOGI(TAG, "Atmos UI started after %u ms of splash (%s) in %.1f ms; internal free %u, PSRAM free %u",
@@ -123,7 +125,7 @@ void AtmosComponent::advance(int direction) {
     return;
   this->key_pressed_ = true;
   this->last_key_ms_ = now;
-  int before = atmos_reading();
+  int before = this->shown_();
   atmos_advance(direction);
   // During a transition the press waits for the arriving page; adopt the reading it moves to.
   this->adopt_ = true;
@@ -138,13 +140,15 @@ void AtmosComponent::select_option(int option) {
     else
       this->set_auto(true);
   } else {
-    int reading = option - 1;
+    int reading = option == 1 ? OVERVIEW : option - 2;
     this->manual_ = reading;
     this->adopt_ = false;
-    if (this->started_)
-      atmos_select_reading(reading);
-    else
+    if (!this->started_)
       this->pending_reading_ = reading;
+    else if (reading == OVERVIEW)
+      atmos_select_overview();
+    else
+      atmos_select_reading(reading);
   }
   this->publish_selection_();
 }
@@ -161,19 +165,19 @@ void AtmosComponent::set_auto(bool on) {
 void AtmosComponent::publish_selection_() {
   if (this->reading_select_ == nullptr)
     return;
-  int reading = this->started_ ? atmos_reading() : this->pending_reading_;  // -1 on the overview
+  int reading = this->started_ ? this->shown_() : this->pending_reading_;
   if (this->adopt_ && reading != this->adopt_from_) {
     this->manual_ = reading;
     this->adopt_ = false;
   }
   int option;
   if (!this->auto_) {
-    option = reading >= 0 ? reading + 1 : this->published_option_;  // the overview keeps the last value
+    option = reading >= 0 ? option_of(reading) : this->published_option_;
   } else {
     // The chosen reading has expired once cycling moves the display off it.
     if (this->manual_ >= 0 && reading != this->manual_ && !this->adopt_)
       this->manual_ = -1;
-    option = this->manual_ >= 0 ? this->manual_ + 1 : 0;
+    option = this->manual_ >= 0 ? option_of(this->manual_) : 0;
   }
   if (option >= 0 && option != this->published_option_) {
     this->published_option_ = option;
@@ -249,8 +253,10 @@ void AtmosAlertSwitch::setup() {
 }
 
 void AtmosAlertSwitch::write_state(bool state) {
-  if (this->sound_)
+  if (this->kind_ == 1)
     atmos_set_alert_sound(state);
+  else if (this->kind_ == 2)
+    atmos_set_overview_dark(state);
   else
     atmos_set_alert_focus(state);
   this->publish_state(state);

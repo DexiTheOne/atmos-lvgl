@@ -55,6 +55,22 @@
 #define UI_MAIN_VALUE_SIZE 64
 #define UI_MAIN_GAP UI_TEXT_GAP
 #define UI_FOOTER_GAP UI_TEXT_GAP
+/* Overview tiles: 4 x 2, from the header rule to UI_TILE_BOTTOM. */
+#define UI_TILE_COUNT 8
+#define UI_TILE_W ((UI_WIDTH-2*UI_MARGIN)/4)
+/* 1: tiles closed by a full grid (outer border, full-height dividers, bottom margin);
+   0: open style, inset dividers only. */
+#define UI_TILE_GRID 1
+#if UI_TILE_GRID
+#define UI_TILE_BOTTOM (UI_HEIGHT-UI_MARGIN) /* the bottom border's row */
+#else
+#define UI_TILE_BOTTOM UI_HEIGHT
+#endif
+#define UI_TILE_PAD 4
+#define UI_TILE_RULE_INSET 10
+#define UI_TILE_ICON 16
+#define UI_TILE_ICON_GAP 3
+#define UI_TILE_MARK 14
 /* CO2 detail page and reusable time-series chart parameters. */
 #define UI_CO2_TITLE_SIZE UI_FONT_TITLE
 #define UI_CO2_VALUE_SIZE 80

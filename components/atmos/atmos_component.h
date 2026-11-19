@@ -65,7 +65,7 @@ class AtmosComponent : public Component {
   /* on_alert_start / on_alert_clear: fired at the transition into / out of the alert-focus cycle. */
   Trigger<> *get_alert_start_trigger() { return &this->alert_start_trigger_; }
   Trigger<> *get_alert_clear_trigger() { return &this->alert_clear_trigger_; }
-  /* Select option: 0 "Auto Advance" (turns cycling on), else reading option - 1. */
+  /* Select option: 0 "Auto Advance" (turns cycling on), 1 the overview, else reading option - 2. */
   void select_option(int option);
   void set_auto(bool on);
   void set_hold(float seconds);
@@ -137,6 +137,14 @@ class AtmosComponent : public Component {
   // does not record a state change per step. A key press during a transition takes
   // effect on arrival: adopt_ waits for the reading to move off adopt_from_.
   int manual_{-1}, adopt_from_{-1};
+  // Shown item: a reading, or OVERVIEW; select options are "Auto Advance",
+  // "Overview", then the readings.
+  static constexpr int OVERVIEW = ATMOS_READINGS;
+  static int option_of(int item) { return item == OVERVIEW ? 1 : item + 2; }
+  int shown_() const {
+    int r = atmos_reading();
+    return r < 0 ? OVERVIEW : r;
+  }
   bool adopt_{false};
   bool auto_{true};
   void publish_selection_();
@@ -147,8 +155,9 @@ class AtmosComponent : public Component {
   void push_readings_();
 };
 
-/* Drop-down of "Auto Advance" and the readings: choosing a reading moves to its page and
-   underlines/charts it; choosing "Auto Advance" turns cycling on. */
+/* Drop-down of "Auto Advance", "Overview" and the readings: choosing a reading moves to
+   its page and underlines/charts it; "Overview" shows the overview (cycling, if on,
+   continues after its hold); "Auto Advance" turns cycling on. */
 class AtmosReadingSelect : public select::Select, public Parented<AtmosComponent> {
  protected:
   void control(size_t index) override { this->parent_->select_option((int) index); }
@@ -179,18 +188,19 @@ class AtmosAutoSwitch : public switch_::Switch, public Component, public Parente
   void write_state(bool state) override;
 };
 
-/* Alert focus (while any reading alerts, automatic cycling shows only alerting readings),
-   or with set_sound(true) alert sounds (the on_alert_start/on_alert_clear triggers; they
-   need alert focus). Model settings atmos_init() keeps, so they apply before the UI starts. */
+/* Kind 0: alert focus (while any reading alerts, automatic cycling shows only alerting
+   readings); 1: alert sounds (the on_alert_start/on_alert_clear triggers; they need
+   alert focus); 2: overview in low light (atmos_set_overview_dark()). Model settings
+   atmos_init() keeps, so they apply before the UI starts. */
 class AtmosAlertSwitch : public switch_::Switch, public Component {
  public:
-  void set_sound(bool sound) { this->sound_ = sound; }
+  void set_kind(int kind) { this->kind_ = kind; }
   void setup() override;
   float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }
 
  protected:
   void write_state(bool state) override;
-  bool sound_{false};
+  int kind_{0};
 };
 
 /* Page hold or history span, in the entity's unit (scale = seconds per unit). Restored

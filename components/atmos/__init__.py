@@ -48,6 +48,7 @@ CONF_ALERT = "alert"
 CONF_ALERT_FOCUS = "alert_focus"
 CONF_ALERT_ACTIVE = "alert_active"
 CONF_ALERT_SOUND = "alert_sound"
+CONF_OVERVIEW_LOW_LIGHT = "overview_low_light"
 CONF_ALERT_ENTER = "alert_enter"
 CONF_ALERT_LEAVE = "alert_leave"
 CONF_ALERT_SOUND_COOLDOWN = "alert_sound_cooldown"
@@ -242,6 +243,15 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_CONFIG,
             icon="mdi:bell-ring-outline",
         ).extend(cv.COMPONENT_SCHEMA),
+        # Low light (atmos_led auto_dimming's ambient sensor) parks the display on the
+        # overview: at the next hold end while cycling, at once otherwise; lit again,
+        # it resumes at once. Alerts do not override it. Low light always mutes alert sounds.
+        cv.Optional(CONF_OVERVIEW_LOW_LIGHT): switch.switch_schema(
+            AtmosAlertSwitch,
+            default_restore_mode="RESTORE_DEFAULT_OFF",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon="mdi:weather-night",
+        ).extend(cv.COMPONENT_SCHEMA),
         # Alert hysteresis for every reading: it joins the alert set after alerting this
         # long, and leaves it after being clear this long. Badges show the raw rating.
         cv.Optional(CONF_ALERT_ENTER, default="60s"): cv.All(
@@ -314,7 +324,7 @@ async def to_code(config):
             lo, hi = band.get(CONF_MIN_VALUE), band.get(CONF_MAX_VALUE)
             cg.add(var.add_band(index, nan if lo is None else lo, nan if hi is None else hi, band[CONF_LEVEL], band[CONF_TEXT], band[CONF_ALERT]))
     if conf := config.get(CONF_READING_SELECT):
-        sel = await select.new_select(conf, options=["Auto Advance"] + [name for _, name in READINGS])
+        sel = await select.new_select(conf, options=["Auto Advance", "Overview"] + [name for _, name in READINGS])
         await cg.register_parented(sel, var)
         cg.add(var.set_reading_select(sel))
     for key, options, pressure in ((CONF_TEMPERATURE_UNIT, TEMPERATURE_UNITS, False), (CONF_PRESSURE_UNIT, PRESSURE_UNITS, True)):
@@ -334,7 +344,11 @@ async def to_code(config):
     if conf := config.get(CONF_ALERT_SOUND):
         sw = await switch.new_switch(conf)
         await cg.register_component(sw, conf)
-        cg.add(sw.set_sound(True))
+        cg.add(sw.set_kind(1))
+    if conf := config.get(CONF_OVERVIEW_LOW_LIGHT):
+        sw = await switch.new_switch(conf)
+        await cg.register_component(sw, conf)
+        cg.add(sw.set_kind(2))
     cg.add(var.set_alert_times(
         config[CONF_ALERT_ENTER].total_milliseconds / 1000.0,
         config[CONF_ALERT_LEAVE].total_milliseconds / 1000.0,

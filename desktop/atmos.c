@@ -69,6 +69,11 @@ static bool paused, automatic=true, hidden, external_data, moving, alert_focus;
 /* Items automatic cycling steps through during this hold, fixed when the hold starts
    so a reading that clears mid-hold still gets its time. 0 means every item. */
 static unsigned hold_items;
+/* Overview detour: anchor is the last cycle page shown. Low light (the device's
+   ambient sensor) mutes alert sounds and, with overview_dark on, parks the display on
+   the overview; dark_parked marks a park to undo when the room is lit again. */
+static int anchor=1;
+static bool low_light,overview_dark,dark_parked,dark_now;
 /* The first transition after a splash opens from it onto the first page. */
 static bool intro;
 static int pm_selected=1,pm_snapshot_count;
@@ -104,9 +109,10 @@ static uint8_t scene_buf[2][I1_PALETTE+FRAME_BYTES];
 static uint8_t transition_bits[FRAME_BYTES];
 static bool transition_drawn;
 /* Page order: scene numbers by position, grouped from "open a window?" to comfort:
-   overview, CO2, gases, formaldehyde, particles, climate. The overview (position 0)
-   is left out of the cycle for now (CYCLE_FIRST); its code stays, and key 1 still
-   selects it directly. Scene numbers themselves are fixed identifiers. */
+   overview, CO2, gases, formaldehyde, particles, climate. Automatic cycling starts at
+   CYCLE_FIRST and so never visits the overview; the overview is a detour (the right
+   key after a page's last reading, the reading select, low light) that resumes the
+   cycle after its anchor, the last page shown before it. Scene numbers themselves are fixed identifiers. */
 static const int page_order[ATMOS_SCENES]={0,1,3,5,2,4};
 #define CYCLE_FIRST 1
 #define SCENE_BITS(i) (scene_buf[i]+I1_PALETTE)
@@ -459,44 +465,6 @@ static int stack_rows(int n,const char *const *canon,const int *size,int gap,int
     if(height)*height=h;
     return top;
 }
-static void status_flower(void){
-    const int cx=UI_FLOWER_X,cy=UI_FLOWER_Y;
-    circle(cx,cy,UI_FLOWER_RADIUS,UI_FLOWER_RING,false);
-    /* Scan-convert the transformed petal geometry as opaque spans. This avoids
-       shared-edge cracks from separately rasterized triangles. The exclusion
-       disk is part of the geometry, so no petal can cover the fixed symbol. */
-    float phase=fmod(anim_t*UI_FLOWER_SPEED,TAU);
-    /* Petal rotations depend only on the frame, not the pixel: compute them once. */
-    float petal_cos[UI_FLOWER_PETALS],petal_sin[UI_FLOWER_PETALS];
-    for(int i=0;i<UI_FLOWER_PETALS;i++){
-        float q=phase+i*TAU/UI_FLOWER_PETALS;petal_cos[i]=cos(q);petal_sin[i]=sin(q);
-    }
-    for(int y=-UI_FLOWER_RADIUS;y<=UI_FLOWER_RADIUS;y++){
-        int start=-999;
-        for(int x=-UI_FLOWER_RADIUS;x<=UI_FLOWER_RADIUS+1;x++){
-            bool ink=false;
-            if(x<=UI_FLOWER_RADIUS && x*x+y*y>=UI_SYMBOL_CLEARANCE*UI_SYMBOL_CLEARANCE){
-                for(int i=0;i<UI_FLOWER_PETALS;i++){
-                    float radial=(x*petal_cos[i]+y*petal_sin[i]-UI_PETAL_CENTER)/UI_PETAL_LENGTH;
-                    float tangent=(-x*petal_sin[i]+y*petal_cos[i])/UI_PETAL_HALF_WIDTH;
-                    if(radial*radial+tangent*tangent<=1){ink=true;break;}
-                }
-            }
-            if(ink && start==-999)start=x;
-            if(!ink && start!=-999){rect(cx+start,cy+y,x-start,1,false,0);start=-999;}
-        }
-    }
-    if(warning()){
-        line(cx,cy-18,cx+21,cy+18,3,false);
-        line(cx+21,cy+18,cx-21,cy+18,3,false);
-        line(cx-21,cy+18,cx,cy-18,3,false);
-        line(cx,cy-5,cx,cy+6,4,false);circle(cx,cy+13,2,2,false);
-    }else{
-        /* Symmetric visible bounds around the flower center. */
-        line(cx-18,cy+2,cx-7,cy+14,6,false);
-        line(cx-7,cy+14,cx+18,cy-14,6,false);
-    }
-}
 /* Centre text on its visible ink, not its advance box. Our UTF-8 unit glyphs
    (degree, micro, cube) are code points 0xB0..0xB5, so header_ink_bounds finds
    them from their second byte and skips the 0xC2 lead byte. */
@@ -523,36 +491,187 @@ static int widest_decimal(int digits,int decimals,int size){
     s[n]=0;return ink_width(s,size);
 }
 static int widest_number(int digits,bool point,int size){return widest_decimal(digits,point?1:0,size);}
-/* The column starts at the left margin, sized to its widest ink; the flower
-   ends at the right margin. */
-static void primary_measurement(void){
-    char value[32];format_reading(value,sizeof value,sensor.co2,0,false);
-    static const char *const canon[]={"CO2","0123456789","PPM"};
-    static const int size[]={UI_FONT_LABEL,UI_MAIN_VALUE_SIZE,UI_FONT_LABEL};
-    int y[3];stack_rows(3,canon,size,UI_MAIN_GAP,content_center(),y,NULL);
-    int width=LV_MAX(LV_MAX(ink_width("CO2",UI_FONT_LABEL),widest_number(5,false,UI_MAIN_VALUE_SIZE)),ink_width("PPM",UI_FONT_LABEL));
-    int center=UI_MARGIN+width/2;
-    centered_text("CO2",center,y[0],UI_FONT_LABEL,false);
-    centered_text(value,center,y[1],UI_MAIN_VALUE_SIZE,false);
-    centered_text("PPM",center,y[2],UI_FONT_LABEL,false);
+/* Overview: a quiet, static 4x2 grid of tiles, one per reading: icon, short name and
+   rating marker on top, the value and its unit below. Nothing moves; the page
+   redraws only when readings change. Icons and markers are shapes sampled at pixel
+   centres and drawn as spans. */
+static bool seg_ink(float px,float py,float ax,float ay,float bx,float by,float r){
+    float dx=bx-ax,dy=by-ay,l=dx*dx+dy*dy,u=l>0?clamp(((px-ax)*dx+(py-ay)*dy)/l,0,1):0;
+    float ex=px-ax-u*dx,ey=py-ay-u*dy;return ex*ex+ey*ey<=r*r;
 }
-/* Footer rows share one canonical stack, centred in the panel. */
-static void footer_measurement(int center,const char *label,float value,const char *unit){
-    char s[32];format_reading(s,sizeof s,value,1,false);
-    static const char *const canon[]={"PM2.5Temperature","0123456789","\xc2\xb5" "g/m\xc2\xb3" "\xc2\xb0" "C"};
-    static const int size[]={UI_FONT_LABEL,UI_FONT_VALUE,UI_FONT_UNIT};
-    int y[3];stack_rows(3,canon,size,UI_FOOTER_GAP,(UI_FOOTER_TOP+UI_HEIGHT)/2,y,NULL);
-    centered_text(label,center,y[0],UI_FONT_LABEL,true);
-    centered_text(s,center,y[1],UI_FONT_VALUE,true);
-    centered_text(unit,center,y[2],UI_FONT_UNIT,true);
+static bool disc_ink(float px,float py,float cx,float cy,float r){return (px-cx)*(px-cx)+(py-cy)*(py-cy)<=r*r;}
+static bool ring_ink(float px,float py,float cx,float cy,float r,float w){
+    float d=(px-cx)*(px-cx)+(py-cy)*(py-cy);return d<=r*r && d>(r-w)*(r-w);
 }
+enum{ICON_CO2,ICON_VOC,ICON_NOX,ICON_HCHO,ICON_PM25,ICON_PM10,ICON_TEMP,ICON_RH,
+     MARK_GOOD,MARK_FAIR,MARK_POOR};
+static bool icon_ink(int kind,int x,int y){
+    float px=x+.5f,py=y+.5f;
+    switch(kind){
+    case ICON_CO2: return ring_ink(px,py,5.5f,10.5f,5.5f,2.0f)||ring_ink(px,py,13.0f,4.0f,3.0f,1.6f)||disc_ink(px,py,13.5f,12.5f,2.0f);
+    case ICON_VOC: case ICON_NOX:{
+        /* The Gases page's ribbons: three S-waves, tapering to their tips; the
+           reading's own ribbon (VOC top, NOx bottom) is thick, the rest are 1 px lines. */
+        float u=px/16.0f,wave=1.4f*sinf(TAU*u),taper=powf(fmaxf(0,sinf(TAU*u/2)),.8f);
+        int thick=kind==ICON_VOC?0:2;
+        for(int lane=0;lane<3;lane++){
+            float d=fabsf(py-(3.0f+5.0f*lane+wave));
+            if(lane==thick?d<=2.0f*taper:d<=.6f && taper>.2f)return true;
+        }
+        return false;}
+    case ICON_HCHO: return ring_ink(px,py,8.0f,9.0f,3.5f,1.6f)||disc_ink(px,py,8.0f,2.2f,2.2f)||seg_ink(px,py,8.0f,4.0f,8.0f,5.5f,.8f)
+        ||disc_ink(px,py,2.2f,14.0f,2.0f)||disc_ink(px,py,13.8f,14.0f,2.0f)
+        ||seg_ink(px,py,5.5f,11.0f,3.5f,13.0f,.8f)||seg_ink(px,py,10.5f,11.0f,12.5f,13.0f,.8f);
+    case ICON_PM25: return disc_ink(px,py,3.0f,4.0f,1.5f)||disc_ink(px,py,10.0f,2.5f,1.5f)||disc_ink(px,py,7.0f,8.0f,1.5f)
+        ||disc_ink(px,py,13.5f,9.0f,1.5f)||disc_ink(px,py,3.5f,13.0f,1.5f)||disc_ink(px,py,11.0f,14.0f,1.5f);
+    case ICON_PM10: return disc_ink(px,py,4.0f,4.0f,3.2f)||disc_ink(px,py,12.0f,6.0f,2.6f)||disc_ink(px,py,6.5f,12.5f,3.0f);
+    case ICON_TEMP:{ /* The Climate page's thermometer: outlined stem and bulb, mercury inside. */
+        bool outer=seg_ink(px,py,8.0f,2.5f,8.0f,11.5f,2.5f)||disc_ink(px,py,8.0f,12.0f,4.0f);
+        bool inner=seg_ink(px,py,8.0f,2.5f,8.0f,11.5f,1.5f)||disc_ink(px,py,8.0f,12.0f,3.0f);
+        bool mercury=seg_ink(px,py,8.0f,6.0f,8.0f,11.5f,.5f)||disc_ink(px,py,8.0f,12.0f,2.0f);
+        return outer && (!inner || mercury);}
+    case ICON_RH: return disc_ink(px,py,8.0f,10.5f,5.0f)||(py<=10.5f && py>=.5f && fabsf(px-8.0f)<=(py-.5f)*.5f);
+    /* The check spans the same height as the other markers. */
+    case MARK_GOOD: return seg_ink(px,py,1.8f,7.5f,5.2f,11.8f,1.3f)||seg_ink(px,py,5.2f,11.8f,12.2f,1.8f,1.3f);
+    case MARK_FAIR: return ring_ink(px,py,7.0f,7.0f,6.5f,1.5f)||seg_ink(px,py,7.0f,3.5f,7.0f,7.5f,1.0f)||disc_ink(px,py,7.0f,10.3f,1.1f);
+    default:{ /* Poor: a solid warning triangle with a paper exclamation mark. */
+        bool tri=py>=.5f && py<=13.5f && fabsf(px-7.0f)<=(py-.5f)*7.0f/13.0f;
+        bool mark=seg_ink(px,py,7.0f,5.0f,7.0f,8.5f,1.0f)||disc_ink(px,py,7.0f,11.2f,1.1f);
+        return tri && !mark;}
+    }
+}
+static void draw_icon(int kind,int x0,int y0,int size){
+    for(int y=0;y<size;y++){
+        int run=-1;
+        for(int x=0;x<=size;x++){
+            bool on=x<size && icon_ink(kind,x,y);
+            if(on && run<0)run=x;
+            if(!on && run>=0){rect(x0+run,y0+y,x-run,1,false,0);run=-1;}
+        }
+    }
+}
+typedef struct{int reading,icon;const char *name;int decimals;} overview_tile_t;
+static const overview_tile_t overview_tiles[UI_TILE_COUNT]={
+    {ATMOS_CO2,ICON_CO2,"CO2",0},{ATMOS_VOC,ICON_VOC,"VOC",0},{ATMOS_NOX,ICON_NOX,"NOx",0},{ATMOS_HCHO,ICON_HCHO,"HCHO",0},
+    {ATMOS_PM25,ICON_PM25,"PM2.5",1},{ATMOS_PM10,ICON_PM10,"PM10",1},{ATMOS_TEMPERATURE,ICON_TEMP,"Temp",1},{ATMOS_HUMIDITY,ICON_RH,"RH",0}};
+static const char *tile_unit(int r){
+    switch(r){case ATMOS_CO2:return "ppm";case ATMOS_VOC:case ATMOS_NOX:return "Index";case ATMOS_HCHO:return "ppb";
+    case ATMOS_TEMPERATURE:return shown_unit(4);case ATMOS_HUMIDITY:return "%";default:return "\xc2\xb5" "g/m\xc2\xb3";}
+}
+/* Widest value a tile can show, up to the sensor maximum. */
+static int tile_widest(int i,int size){
+    switch(overview_tiles[i].reading){
+    case ATMOS_CO2:return widest_decimal(3,1,size)+ink_width("k",size);
+    case ATMOS_VOC:case ATMOS_NOX:case ATMOS_HUMIDITY:case ATMOS_HCHO:return widest_number(4,false,size);
+    case ATMOS_TEMPERATURE:{int d,p;shown_widest(4,&d,&p);return widest_decimal(d,p,size);}
+    default:return widest_decimal(4,1,size); /* PM "999.9"; "1000" is narrower */
+    }
+}
+static int tile_value_size(void){
+    static const int sizes[]={40,32,28,24};
+    for(unsigned s=0;s<sizeof sizes/sizeof *sizes;s++){
+        bool fit=true;
+        for(int i=0;i<UI_TILE_COUNT && fit;i++)fit=tile_widest(i,sizes[s])<=UI_TILE_W-2*UI_TILE_PAD;
+        if(fit)return sizes[s];
+    }
+    return 24;
+}
+/* Ink bounds of each icon and marker, measured once: the shapes are fixed, so their
+   ink is their permanent boundary for layout. */
+static lv_area_t icon_ink_box(int kind){
+    static lv_area_t box[MARK_POOR+1];static bool measured;
+    if(!measured){
+        for(int k=0;k<=MARK_POOR;k++){
+            int size=k<MARK_GOOD?UI_TILE_ICON:UI_TILE_MARK;lv_area_t a={size,size,-1,-1};
+            for(int y=0;y<size;y++)for(int x=0;x<size;x++)if(icon_ink(k,x,y)){
+                a.x1=LV_MIN(a.x1,x);a.x2=LV_MAX(a.x2,x);a.y1=LV_MIN(a.y1,y);a.y2=LV_MAX(a.y2,y);
+            }
+            box[k]=a;
+        }
+        measured=true;
+    }
+    return box[kind];
+}
+static int area_h(lv_area_t a){return a.y2-a.y1+1;}
+/* Head row of a tile, relative to its centre line: the icon's ink and the name's
+   capitals are both centred on that line. The row's extent is the icon and the
+   capitals: text sits on its baseline and descenders hang into the gap below.
+   Returns the icon's ink top and the name's draw y; sets the row's extent. */
+static void tile_head(const overview_tile_t *tile,int *icon_top,int *name_y,int *ink_top,int *ink_bottom){
+    lv_area_t caps=header_ink_bounds("H",dashboard_font(UI_FONT_LABEL));
+    lv_area_t ic=icon_ink_box(tile->icon);
+    *icon_top=-area_h(ic)/2;
+    *name_y=-area_h(caps)/2-caps.y1;
+    *ink_top=LV_MIN(*icon_top,-area_h(caps)/2);
+    *ink_bottom=LV_MAX(*icon_top+area_h(ic)-1,-area_h(caps)/2+area_h(caps)-1);
+}
+/* Tiles are equal (UI_TILE_W x row_h). Inside each, four rows are centred on the
+   tile's centre line: icon with name, value, unit, rating marker. Rows are measured
+   by ink: text rows from their tallest ascender to the baseline they share across
+   tiles (descenders hang into the gap below, as in type); icons and markers by their
+   own ink, centred in their row. The leftover height is split into five equal gaps:
+   above, between and below the rows. */
+static void pill(int x,int y,int w,int h,int radius,bool paper);
+/* Where each tile's icon box was last drawn: the overview's transition anchors. */
+static int tile_icon_at[UI_TILE_COUNT][2];
 static void draw_dashboard(void){
-    dashboard_header();primary_measurement();status_flower();
-    rect(0,UI_FOOTER_TOP,UI_WIDTH,UI_HEIGHT-UI_FOOTER_TOP,false,0);
-    rect((UI_WIDTH-UI_FOOTER_DIVIDER)/2,UI_FOOTER_TOP+UI_FOOTER_PADDING,UI_FOOTER_DIVIDER,
-        UI_HEIGHT-UI_FOOTER_TOP-2*UI_FOOTER_PADDING,true,0);
-    footer_measurement(UI_WIDTH/4,"PM2.5",sensor.pm,"\xc2\xb5" "g/m\xc2\xb3");
-    footer_measurement(3*UI_WIDTH/4,"Temperature",isfinite(sensor.temp)?shown(4,sensor.temp):NAN,shown_unit(4));
+    dashboard_header();
+    const int top=UI_HEADER_BOTTOM+UI_DIVIDER,row_h=(UI_TILE_BOTTOM-top-UI_DIVIDER)/2;
+    rect(UI_MARGIN,top+row_h,UI_WIDTH-2*UI_MARGIN,UI_DIVIDER,false,0);
+#if UI_TILE_GRID
+    /* Closed grid with the PM cards' rounded corners: the header rule is its top
+       edge, so the rule is replaced by the frame's outline. */
+    int bottom=top+2*row_h+UI_DIVIDER,w=UI_WIDTH-2*UI_MARGIN,fh=bottom+UI_DIVIDER-UI_HEADER_BOTTOM;
+    rect(UI_MARGIN,UI_HEADER_BOTTOM,w,UI_DIVIDER,true,0);
+    pill(UI_MARGIN,UI_HEADER_BOTTOM,w,fh,UI_PM_CARD_RADIUS,false);
+    pill(UI_MARGIN+UI_DIVIDER,UI_HEADER_BOTTOM+UI_DIVIDER,w-2*UI_DIVIDER,fh-2*UI_DIVIDER,UI_PM_CARD_RADIUS-UI_DIVIDER,true);
+    rect(UI_MARGIN,top+row_h,w,UI_DIVIDER,false,0);
+    for(int c=1;c<4;c++)
+        rect(UI_MARGIN+c*UI_TILE_W,UI_HEADER_BOTTOM,UI_DIVIDER,fh,false,0);
+#else
+    for(int c=1;c<4;c++)for(int r=0;r<2;r++)
+        rect(UI_MARGIN+c*UI_TILE_W,top+r*(row_h+UI_DIVIDER)+UI_TILE_RULE_INSET,UI_DIVIDER,row_h-2*UI_TILE_RULE_INSET,false,0);
+#endif
+    int vsize=tile_value_size();
+    lv_area_t digits=header_ink_bounds("0123456789",dashboard_font(vsize));
+    /* Units: ascender to baseline (no descender letters in the canon). */
+    lv_area_t units=header_ink_bounds("Idb%",dashboard_font(UI_FONT_UNIT));
+    int h[4]={0,area_h(digits),area_h(units),0};
+    for(int i=0;i<UI_TILE_COUNT;i++){
+        int it,ny,t0,t1;tile_head(&overview_tiles[i],&it,&ny,&t0,&t1);h[0]=LV_MAX(h[0],t1-t0+1);
+    }
+    for(int k=MARK_GOOD;k<=MARK_POOR;k++)h[3]=LV_MAX(h[3],area_h(icon_ink_box(k)));
+    int free=row_h-h[0]-h[1]-h[2]-h[3],gap=free/5,pad=gap+(free-5*gap)/2;
+    for(int i=0;i<UI_TILE_COUNT;i++){
+        const overview_tile_t *tile=&overview_tiles[i];
+        int col=i%4,row=i/4;
+        int mid=UI_MARGIN+col*UI_TILE_W+UI_TILE_W/2;
+        int slot[4],at=top+row*(row_h+UI_DIVIDER)+pad;
+        for(int r=0;r<4;r++){slot[r]=at;at+=h[r]+gap;}
+        /* Icon and name, centred together by their ink across, UI_TILE_ICON_GAP apart. */
+        lv_area_t name=header_ink_bounds(tile->name,dashboard_font(UI_FONT_LABEL));
+        lv_area_t ic=icon_ink_box(tile->icon);
+        int icon_w=ic.x2-ic.x1+1,head_w=icon_w+UI_TILE_ICON_GAP+name.x2-name.x1+1;
+        int head_x=mid-(head_w+1)/2;
+        int icon_top,name_y,ink_top,ink_bottom;tile_head(tile,&icon_top,&name_y,&ink_top,&ink_bottom);
+        int line=slot[0]+(h[0]-(ink_bottom-ink_top+1))/2-ink_top;
+        tile_icon_at[i][0]=head_x-ic.x1;tile_icon_at[i][1]=line+icon_top-ic.y1;
+        draw_icon(tile->icon,tile_icon_at[i][0],tile_icon_at[i][1],UI_TILE_ICON);
+        dashboard_text(tile->name,head_x+icon_w+UI_TILE_ICON_GAP-name.x1,line+name_y,UI_FONT_LABEL,false);
+        float v=reading_value(tile->reading);
+        if(tile->reading==ATMOS_TEMPERATURE && isfinite(v))v=shown(4,v);
+        char s[32];format_reading(s,sizeof s,v,tile->decimals,tile->reading==ATMOS_CO2);
+        centered_text(s,mid,slot[1]-digits.y1,vsize,false);
+        const char *unit=tile_unit(tile->reading);
+        centered_text(unit,mid,slot[2]-units.y1,UI_FONT_UNIT,false);
+        rating b=rate(tile->reading);
+        if(b){
+            int kind=b->level<=0?MARK_GOOD:b->level==1?MARK_FAIR:MARK_POOR;
+            lv_area_t m=icon_ink_box(kind);
+            /* Centred on its own ink, both ways, in the markers' shared row. */
+            draw_icon(kind,mid-(m.x1+m.x2+1)/2,slot[3]+(h[3]-area_h(m))/2-m.y1,UI_TILE_MARK);
+        }
+    }
 }
 static int co2_bubble_radius(int j){
     static const int radii[UI_BUBBLE_COUNT]={6,11,16,23,8,13,5,9,19,7,12,10};return radii[j];
@@ -1533,9 +1652,9 @@ static void put_bit(uint8_t *bits,int x,int y,bool paper){
 }
 /* Transitions are chosen by the page being left: each page opens onto the next through
    its own artwork, so any page can be reached from any other. */
-enum{EFFECT_PORTAL,EFFECT_DUST,EFFECT_RIBBONS,EFFECT_DROPLET,EFFECT_ATOM};
+enum{EFFECT_PORTAL,EFFECT_DUST,EFFECT_RIBBONS,EFFECT_DROPLET,EFFECT_ATOM,EFFECT_TILE};
 static int transition_effect(int from){
-    static const int effects[ATMOS_SCENES]={EFFECT_PORTAL,EFFECT_PORTAL,EFFECT_DUST,EFFECT_RIBBONS,EFFECT_DROPLET,EFFECT_ATOM};
+    static const int effects[ATMOS_SCENES]={EFFECT_TILE,EFFECT_PORTAL,EFFECT_DUST,EFFECT_RIBBONS,EFFECT_DROPLET,EFFECT_ATOM};
     return effects[from];
 }
 /* The overview zooms into its status circle; CO2 into one of its visible bubbles. */
@@ -1672,6 +1791,11 @@ typedef struct{int32_t x,y,radius,delay;} bloom_t;
 static bloom_t blooms[BLOOM_MAX];
 static int bloom_count;
 static int32_t ribbon_wave[UI_WIDTH],ribbon_top;
+/* Swell timing: lanes start up to ribbon_lane_delay apart; columns are delayed by
+   their bucket (RIBBON_BUCKETS steps of ribbon_column_step), all 0 on the page. */
+#define RIBBON_BUCKETS 8
+static uint8_t ribbon_bucket[UI_WIDTH];
+static int32_t ribbon_lane_delay=FX*45/100,ribbon_column_step;
 static int drop_x,drop_top,drop_base;
 static int16_t drop_half[UI_CLIMATE_DROP_HEIGHT];
 static int32_t drop_reach,atom_x,atom_y,atom_reach;
@@ -1682,8 +1806,10 @@ static int32_t farthest_corner(float x,float y){
 }
 /* Called right after the outgoing scene is rasterised (anim_t still at its snapshot
    time), so anchors match the artwork the transition opens through. */
-static void prepare_effect(int from){
+static void prepare_overview_effect(int to);
+static void prepare_effect(int from,int to){
     switch(transition_effect(from)){
+    case EFFECT_TILE:prepare_overview_effect(to);break;
     case EFFECT_PORTAL:select_portal(from);break;
     case EFFECT_DUST:{
         /* The page's largest specks bloom first, then a jittered grid seeds
@@ -1709,6 +1835,7 @@ static void prepare_effect(int from){
         }
     }break;
     case EFFECT_RIBBONS:
+        ribbon_lane_delay=FX*45/100;ribbon_column_step=0;memset(ribbon_bucket,0,sizeof ribbon_bucket);
         ribbon_top=(int32_t)lroundf(gas_ribbon_top*256);
         for(int x=0;x<UI_WIDTH;x++){
             float u=(float)(x-UI_GAS_RIBBON_LEFT)/(UI_GAS_RIBBON_RIGHT-UI_GAS_RIBBON_LEFT);
@@ -1788,18 +1915,18 @@ static void compose_ribbons(int32_t progress){
     const int32_t gap=UI_GAS_RIBBON_GAP<<8,full=(UI_GAS_RIBBON_GAP/2+2)<<8,rim=2<<8;
     const int reach=UI_GAS_WAVE_AMPLITUDE+4+UI_GAS_RIBBON_GAP;
     int lo=floor_div(-(reach<<8)-ribbon_top,gap),hi=floor_div(((UI_HEIGHT+reach)<<8)-ribbon_top,gap)+1;
-    int32_t half[64];
+    static int32_t half[64][RIBBON_BUCKETS];
     if(hi-lo>=64)hi=lo+63;
-    for(int k=lo;k<=hi;k++){
-        int32_t delay=FX*45/100*LV_MIN(LV_ABS(k-1),5)/5;
-        half[k-lo]=(int32_t)(((int64_t)full*fx_window(progress,delay,FX*55/100))>>16);
+    for(int k=lo;k<=hi;k++)for(int b=0;b<RIBBON_BUCKETS;b++){
+        int32_t delay=ribbon_lane_delay*LV_MIN(LV_ABS(k-1),5)/5+b*ribbon_column_step;
+        half[k-lo][b]=(int32_t)(((int64_t)full*fx_window(progress,delay,FX*55/100))>>16);
     }
     for(int y=0;y<UI_HEIGHT;y++){
         for(int x=0;x<UI_WIDTH;x++){
             int32_t rel=((int32_t)y<<8)-ribbon_top-ribbon_wave[x];
             int k0=floor_div(rel+gap/2,gap);uint8_t code=CODE_OUT;
             for(int k=LV_MAX(k0-1,lo);k<=LV_MIN(k0+1,hi);k++){
-                int32_t h=half[k-lo],d=LV_ABS(rel-k*gap);
+                int32_t h=half[k-lo][ribbon_bucket[x]],d=LV_ABS(rel-k*gap);
                 if(h<=0)continue;
                 if(d<h){code=CODE_IN;break;}
                 if(d<h+rim)code=CODE_INK;
@@ -1851,12 +1978,82 @@ static void compose_atom(int32_t progress){
         emit_row(y);
     }
 }
+/* Overview: the destination tile's icon starts that page's own effect. Icon shapes
+   are in icon_ink() coordinates (pixel centres at +.5). */
+static void prepare_overview_effect(int to){
+    static const signed char tile_of[ATMOS_SCENES]={0,0,4,1,7,3};
+    int i=tile_of[to];float ix=(float)tile_icon_at[i][0],iy=(float)tile_icon_at[i][1];
+    /* Pages with two readings on the overview start from both tiles' icons. */
+    int j=LV_MIN(i+1,UI_TILE_COUNT-1);float jx=(float)tile_icon_at[j][0],jy=(float)tile_icon_at[j][1];
+    bloom_count=0;
+    switch(to){
+    case 3:{ /* Gases: the page's ribbon runs between the VOC and NOx icons and
+                swells outward from both, across and from lane to lane. */
+        float cx=(ix+jx)/2+8,cy=(iy+jy)/2+8;
+        ribbon_lane_delay=FX*25/100;ribbon_column_step=FX*20/100/(RIBBON_BUCKETS-1);
+        for(int x=0;x<UI_WIDTH;x++){
+            float u=(float)(x-UI_GAS_RIBBON_LEFT)/(UI_GAS_RIBBON_RIGHT-UI_GAS_RIBBON_LEFT);
+            ribbon_wave[x]=(int32_t)lroundf(gas_wave(u)*256);
+            float d=fminf(fabsf(x-ix-8),fabsf(x-jx-8));
+            ribbon_bucket[x]=(uint8_t)LV_MIN(RIBBON_BUCKETS-1,(int)(d*RIBBON_BUCKETS/UI_WIDTH*1.5f));
+        }
+        ribbon_top=(int32_t)lroundf(cy*256)-(UI_GAS_RIBBON_GAP<<8)-ribbon_wave[LV_CLAMP(0,(int)cx,UI_WIDTH-1)];
+    }break;
+    case 4:{ /* Climate: a droplet falls onto the RH icon's drop. */
+        int height=UI_CLIMATE_DROP_HEIGHT-1,r=UI_CLIMATE_DROP_RADIUS;
+        float base=height-r+.5f,tangent=base-r*r/base,slope=r/sqrtf(base*base-r*r);
+        for(int yy=0;yy<=height;yy++){
+            float half=yy<tangent?yy*slope:sqrtf(fmaxf(0,(r+.5f)*(r+.5f)-(yy-base)*(yy-base)));
+            drop_half[yy]=(int16_t)lroundf(half);
+        }
+        drop_x=(int)ix+8;drop_base=(int)lroundf(iy+10.5f);drop_top=drop_base-(int)lroundf(base);
+        drop_reach=farthest_corner(drop_x,drop_base);
+    }break;
+    case 5: /* Formaldehyde: the icon's oxygen atom. */
+        atom_x=(int32_t)lroundf((ix+8.0f)*256);atom_y=(int32_t)lroundf((iy+2.2f)*256);
+        atom_reach=farthest_corner(ix+8.0f,iy+2.2f);
+        break;
+    default:{ /* CO2: the icon's bubbles; particles: its specks. Each opens in turn. */
+        static const float co2[][2]={{5.5f,10.5f},{13.0f,4.0f},{13.5f,12.5f}};
+        static const float pm[][2]={{7.0f,8.0f},{3.0f,4.0f},{10.0f,2.5f},{13.5f,9.0f},{3.5f,13.0f},{11.0f,14.0f}};
+        static const float pm10[][2]={{4.0f,4.0f},{12.0f,6.0f},{6.5f,12.5f}};
+        const float (*p)[2]=to==1?co2:pm;int n=to==1?3:6;
+        for(int k=0;k<n;k++){
+            float x=ix+p[k][0],y=iy+p[k][1];
+            int32_t r=to==1?farthest_corner(x,y):70<<8;
+            blooms[bloom_count++]=(bloom_t){(int32_t)lroundf(x*256),(int32_t)lroundf(y*256),r,FX*(to==1?6:3)*k/100};
+        }
+        /* Particles: the PM10 icon's specks bloom alongside the PM2.5 icon's. */
+        for(int k=0;k<3 && to==2;k++){
+            float x=jx+pm10[k][0],y=jy+pm10[k][1];
+            blooms[bloom_count++]=(bloom_t){(int32_t)lroundf(x*256),(int32_t)lroundf(y*256),70<<8,FX*3*k/100};
+        }
+        if(to==2){
+            /* Particles: the page's dust storm, a jittered grid of blooms spreading
+               out from both icons, as when leaving the particles page. */
+            for(int r=0;r<4;r++)for(int c=0;c<5;c++){
+                int x=40+80*c+(r*7+c*13)%25-12,y=37+75*r+(r*11+c*5)%25-12;
+                float distance=fminf(hypotf(x-ix-8,y-iy-8),hypotf(x-jx-8,y-jy-8));
+                int32_t delay=FX*15/100+(int32_t)(FX*.3f*fminf(distance/450.0f,1));
+                blooms[bloom_count++]=(bloom_t){x<<8,y<<8,80<<8,delay};
+            }
+        }
+    }break;
+    }
+}
 static void compose_transition(int from,int to,int32_t progress){
     /* Exact endpoints avoid a one-frame jump when returning to direct rendering. */
     if(progress<=0){memcpy(transition_bits,SCENE_BITS(0),FRAME_BYTES);return;}
     if(progress>=FX){memcpy(transition_bits,SCENE_BITS(1),FRAME_BYTES);return;}
-    switch(transition_effect(from)){
+    /* The intro opens from the splash, which passes the overview as its page. */
+    switch(intro?EFFECT_PORTAL:transition_effect(from)){
     case EFFECT_PORTAL:compose_portal(from,to,progress);break;
+    case EFFECT_TILE: /* Icon handoff: the destination's own effect, from its tile icon. */
+        if(to==3)compose_ribbons(progress);
+        else if(to==4)compose_droplet(progress);
+        else if(to==5)compose_atom(progress);
+        else compose_dust(progress);
+        break;
     case EFFECT_DUST:compose_dust(progress);break;
     case EFFECT_RIBBONS:compose_ribbons(progress);break;
     case EFFECT_DROPLET:compose_droplet(progress);break;
@@ -1906,7 +2103,7 @@ static bool area_within(const lv_area_t *in,const lv_area_t *out){
    inside the box must be drawn here too (the self-test compares with full redraws). */
 static void draw_animated(int which){
     rect(0,0,UI_WIDTH,UI_HEIGHT,true,0);
-    switch(which){case 0:status_flower();break;case 1:co2_live_bubbles();break;
+    switch(which){case 0:break;case 1:co2_live_bubbles();break;
         case 2:pm_particle_field();break;case 3:gas_ribbons();break;case 5:hcho_molecules();break;
         default:{climate_layout_t l=climate_layout();climate_icons(&l);}break;}
 }
@@ -1924,7 +2121,7 @@ static void draw(lv_event_t *event){
     if(!snapshots_ready){
         double start=t-movement;
         anim_t=start;
-        if(intro){render_splash_buffer();splash_portal();}else{render_scene_buffer(0,scene);prepare_effect(scene);}
+        if(intro){render_splash_buffer();splash_portal();}else{render_scene_buffer(0,scene);prepare_effect(scene,destination);}
         anim_t=start+duration;render_scene_buffer(1,destination);
         anim_t=t;snapshots_ready=true;
     }
@@ -1939,8 +2136,7 @@ const uint8_t *atmos_transition_frame(void){return transition_drawn?transition_b
    The simulator self-test checks every partial redraw against a full one. */
 static lv_area_t animated_area(int which){
     switch(which){
-    case 0: return (lv_area_t){UI_FLOWER_X-UI_FLOWER_RADIUS-2,UI_FLOWER_Y-UI_FLOWER_RADIUS-2,
-                               UI_FLOWER_X+UI_FLOWER_RADIUS+2,UI_FLOWER_Y+UI_FLOWER_RADIUS+2};
+    case 0: return (lv_area_t){0,0,-1,-1}; /* The overview is static. */
     case 1: return (lv_area_t){UI_BUBBLE_LEFT-2,UI_BUBBLE_TOP-2,UI_BUBBLE_RIGHT+2,UI_BUBBLE_BOTTOM+2};
     case 2: return (lv_area_t){UI_PM_FIELD_LEFT,UI_PM_FIELD_TOP,UI_PM_FIELD_RIGHT,UI_PM_FIELD_BOTTOM};
     case 3: return (lv_area_t){UI_GAS_RIBBON_LEFT-4,LV_MAX(content_center()-UI_GAS_ART_EXTENT,UI_HEADER_BOTTOM+UI_DIVIDER),
@@ -1965,7 +2161,7 @@ static void invalidate_frame(void){
     }else if(pm_lower){
         lv_area_t a=pm_lower_area();lv_obj_invalidate_area(surface,&a);
         if((int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick){a=animated_area(2);lv_obj_invalidate_area(surface,&a);}
-    }else if(scene!=2 || (int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick){
+    }else if(scene!=0 && (scene!=2 || (int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick)){
         lv_area_t a=animated_area(scene);lv_obj_invalidate_area(surface,&a);
     }
     pm_last_tick=(int64_t)floor(t*UI_PM_FIELD_FPS);
@@ -2093,7 +2289,7 @@ void atmos_init(void){
     axis_label_canvas=lv_canvas_create(lv_screen_active());
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
-    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=CYCLE_FIRST;queued=-1;pending_advance=0;hold_items=0;
+    sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=anchor=CYCLE_FIRST;dark_parked=dark_now=false;queued=-1;pending_advance=0;hold_items=0;
     memset(alert_on,0,sizeof alert_on);for(int r=0;r<ATMOS_READINGS;r++)alert_since[r]=t;
     cycle_alerting=false;event_count=0;
     pm_selected=1;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=chart_rise_age=UI_CHART_BLEND_TIME;chart_from_key=chart_to_key=-1;underline_age=UI_UNDERLINE_TIME;underline_from=-1;underline_from_end=1;for(int i=0;i<4;i++)pm_from_weights[i]=pm_to_weights[i]=i==1?1:0;pm_density=6;
@@ -2136,6 +2332,7 @@ static void auto_select(int s,int item){
 int atmos_page(int position){return page_order[(position%ATMOS_SCENES+ATMOS_SCENES)%ATMOS_SCENES];}
 static int cycle_next(int from,int direction){
     int p=0;while(p<ATMOS_SCENES && page_order[p]!=from)p++;
+    if(p<CYCLE_FIRST){p=0;while(p<ATMOS_SCENES && page_order[p]!=anchor)p++;}
     int n=ATMOS_SCENES-CYCLE_FIRST,i=p<CYCLE_FIRST?(direction>0?-1:0):p-CYCLE_FIRST;
     return page_order[CYCLE_FIRST+((i+direction)%n+n)%n];
 }
@@ -2160,10 +2357,14 @@ static unsigned page_items(int s){
 static int lowest_item(unsigned m){int i=0;while(m && !(m&1u<<i))i++;return i;}
 /* The page automatic cycling moves to next: with alerts, the next alerting page
    (the current one when it alone alerts), else the next page. */
+static bool dark_mode(void){return overview_dark && low_light;}
 static int auto_next(int from){
-    if(!focus_active())return cycle_next(from,1);
-    int to=from;
-    do to=cycle_next(to,1);while(to!=from && !alert_mask(to));
+    /* Low light parks on the overview; alerts do not override it. */
+    if(dark_mode())return 0;
+    int base=from==0?anchor:from;
+    if(!focus_active())return cycle_next(base,1);
+    int to=base;
+    do to=cycle_next(to,1);while(to!=base && !alert_mask(to));
     return to;
 }
 /* Set the next page to the reading it arrives on, before its snapshot is pre-rendered. */
@@ -2175,6 +2376,8 @@ static void start_hold(void){age=0;hold_items=page_items(scene);}
    after an ALERT_CLEAR. */
 static void announce_cycle(void){
     if(!alert_focus){cycle_alerting=false;return;}
+    /* Silent in low light: the change is announced at the first hold end once lit. */
+    if(low_light)return;
     bool now=focus_active();
     if(now==cycle_alerting)return;
     cycle_alerting=now;
@@ -2199,7 +2402,7 @@ static void prerender_step(void){
     }
     /* Wait for the last sample before the transition so the snapshot shows its data. */
     if(pre_stage==2 || next_sample<=start+1e-4)return;
-    if(pre_stage==0){anim_t=start;render_scene_buffer(0,scene);prepare_effect(scene);prerendered_last_step=scene;}
+    if(pre_stage==0){anim_t=start;render_scene_buffer(0,scene);prepare_effect(scene,to);prerendered_last_step=scene;}
     else{anim_t=start+transition_duration(scene,to);render_scene_buffer(1,to);prerendered_last_step=to;}
     anim_t=t;pre_stage++;
 }
@@ -2230,7 +2433,8 @@ void atmos_step(double dt){
     if(moving){
         movement+=dt;
         if(movement>=duration){
-            scene=destination;moving=intro=false;start_hold();full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;underline_age=UI_UNDERLINE_TIME;
+            scene=destination;moving=intro=false;start_hold();
+            if(scene!=0){anchor=scene;dark_parked=false;}full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;underline_age=UI_UNDERLINE_TIME;
             /* Reset the next page now, before its snapshot is pre-rendered, so
                automatic cycling arrives on its first reading. */
             if(automatic)prepare_next(auto_next(scene));
@@ -2247,12 +2451,22 @@ void atmos_step(double dt){
             if(item>auto_selected(scene))auto_select(scene,item);
         }
         prerender_step();
-        if(automatic && age>=hold){
+        if(dark_mode() && scene==0){dark_now=false;dark_parked=true;}
+        if(dark_mode() && scene!=0 && !automatic && (dark_now || age>=hold)){
+            /* Without cycling: park at once on low light, and again one hold after a
+               manual visit. */
+            dark_now=false;dark_parked=true;atmos_set_scene(0);
+        }else if(dark_parked && !dark_mode() && scene==0){
+            /* Lit again: resume at once, cycling on with the page after the anchor. */
+            dark_parked=false;
+            int to=automatic?auto_next(0):anchor;
+            auto_select(to,lowest_item(page_items(to)));atmos_set_scene(to);
+        }else if(automatic && age>=hold){
             announce_cycle();
             int to=auto_next(scene);
             /* A page that alone alerts starts another hold on its first alerting reading. */
             if(to==scene){start_hold();auto_select(scene,lowest_item(hold_items));}
-            else{prepare_next(to);atmos_set_scene(to);}
+            else{if(to==0)dark_parked=true;prepare_next(to);atmos_set_scene(to);}
         }}
     invalidate_frame();
 }
@@ -2283,8 +2497,11 @@ void atmos_advance(int direction){
     /* A press during a transition waits for the arriving page rather than skipping it. */
     if(moving){pending_advance+=direction;return;}
     int item=auto_selected(scene)+direction;
-    if(item>=0 && item<auto_items(scene)){auto_select(scene,item);age=0;return;}
-    int to=cycle_next(scene,direction);
+    if(scene!=0 && item>=0 && item<auto_items(scene)){auto_select(scene,item);age=0;return;}
+    /* Forward, every page's last reading leads to the overview, and the overview to
+       the page after its anchor. Back always steps to the previous reading, from the
+       overview the anchor's last. */
+    int to=direction>0?(scene==0?cycle_next(anchor,1):0):scene==0?anchor:cycle_next(scene,-1);
     if(to!=scene)auto_select(to,direction>0?0:auto_items(to)-1);
     age=0;atmos_set_scene(to);
 }
@@ -2358,6 +2575,19 @@ void atmos_select_reading(int r){
     auto_select(s,reading_item[r]);age=0;pending_advance=0;
     atmos_set_scene(s);
 }
+void atmos_select_overview(void){age=0;pending_advance=0;atmos_set_scene(0);}
+void atmos_set_low_light(bool dark){
+    if(dark==low_light)return;
+    bool was=dark_mode();low_light=dark;
+    if(dark_mode() && !was)dark_now=true;
+}
+bool atmos_low_light(void){return low_light;}
+void atmos_set_overview_dark(bool on){
+    if(on==overview_dark)return;
+    bool was=dark_mode();overview_dark=on;
+    if(dark_mode() && !was)dark_now=true;
+}
+bool atmos_overview_dark(void){return overview_dark;}
 int atmos_reading(void){
     int s=queued>=0?queued:moving?destination:scene,item=auto_selected(s);
     for(int r=0;r<ATMOS_READINGS;r++)if(reading_scene[r]==s && reading_item[r]==item)return r;
@@ -2436,7 +2666,7 @@ int atmos_self_test(void){
     atmos_select_pm(1);for(int i=0;i<4;i++)atmos_step(.1f);
     /* Every directed pair must meet the real, live scenes at both endpoints. */
     for(int from=0;from<ATMOS_SCENES;from++)for(int to=0;to<ATMOS_SCENES;to++)if(from!=to){
-        render_scene_buffer(0,from);prepare_effect(from);render_scene_buffer(1,to);
+        render_scene_buffer(0,from);prepare_effect(from,to);render_scene_buffer(1,to);
         compose_transition(from,to,0);
         if(memcmp(transition_bits,SCENE_BITS(0),FRAME_BYTES))return 8;
         compose_transition(from,to,FX);
@@ -2612,6 +2842,55 @@ int atmos_self_test(void){
         #undef HOLD_END
         alert_focus=automatic=false;sensor=saved_sensor;external_data=saved_external;full_dirty=true;data_version++;
     }
+    {
+        /* Overview detour and low light. */
+        #define SETTLE() do{for(int i=0;i<400 && moving;i++)atmos_step(.025f);}while(0)
+        #define HOLD_END() do{for(int i=0;i<4000 && !moving && age+.025f<hold;i++)atmos_step(.025f);atmos_step(.05f);}while(0)
+        automatic=false;atmos_set_scene(1);SETTLE();
+        /* Right: past the last reading to the overview, then the page after it. */
+        atmos_advance(1);SETTLE();if(scene!=0 || anchor!=1)return 60;
+        atmos_advance(1);SETTLE();if(scene!=3 || gas_selected!=0)return 61;
+        atmos_advance(1);if(scene!=3 || gas_selected!=1)return 61;
+        atmos_advance(1);SETTLE();if(scene!=0)return 62;
+        /* Left from the overview: the anchor's last reading; left never visits it. */
+        atmos_advance(-1);SETTLE();if(scene!=3 || gas_selected!=1)return 63;
+        atmos_advance(-1);atmos_advance(-1);SETTLE();if(scene!=1)return 63;
+        /* The cycle skips the overview; from the overview it resumes after the anchor. */
+        automatic=true;HOLD_END();SETTLE();if(scene!=3)return 64;
+        atmos_select_overview();SETTLE();if(scene!=0 || anchor!=3)return 65;
+        HOLD_END();SETTLE();if(scene!=5)return 66;
+        /* Low light while cycling: parks at the next hold end, ignores alerts, mutes sound. */
+        atmos_readings saved_sensor=sensor;bool saved_external=external_data;
+        float saved_enter=alert_enter,saved_leave=alert_leave;
+        atmos_set_alert_times(0,0);alert_focus=alert_sound=true;cycle_alerting=false;event_count=0;atmos_set_alert_sound_cooldown(0);
+        atmos_set_overview_dark(true);atmos_set_low_light(true);
+        atmos_readings v=sensor;v.co2=1500;atmos_set_readings(v);
+        if(scene!=5 || moving)return 67;
+        HOLD_END();SETTLE();if(scene!=0)return 67;
+        for(int k=0;k<3;k++){HOLD_END();if(moving || scene!=0)return 68;}
+        if(atmos_poll_event())return 69;
+        /* A manual visit in the dark returns after one hold. */
+        atmos_advance(1);SETTLE();if(scene==0)return 70;
+        HOLD_END();SETTLE();if(scene!=0)return 70;
+        /* Lit again: leaves at once for the page after the anchor (the alert page here). */
+        int a=anchor;atmos_set_low_light(false);atmos_step(.025f);
+        if(!moving || destination!=auto_next(0) || destination==a)return 71;
+        SETTLE();
+        /* Without cycling: parks at once, returns to the anchor at once. */
+        automatic=false;alert_focus=alert_sound=false;cycle_alerting=false;event_count=0;
+        atmos_set_readings(saved_sensor);
+        a=scene;atmos_set_low_light(true);atmos_step(.025f);if(!moving || destination!=0)return 72;
+        SETTLE();atmos_set_low_light(false);atmos_step(.025f);SETTLE();if(scene!=a)return 73;
+        /* A user-chosen overview stays when lit if it was not parked. */
+        atmos_set_overview_dark(false);atmos_select_overview();SETTLE();
+        for(int i=0;i<400;i++){atmos_step(.025f);}
+        if(scene!=0)return 74;
+        atmos_set_alert_times(saved_enter,saved_leave);atmos_set_alert_sound_cooldown(1200);
+        sensor=saved_sensor;external_data=saved_external;full_dirty=true;data_version++;
+        #undef SETTLE
+        #undef HOLD_END
+    }
+    puts("Overview detour: right key via the overview, left skipping it, cycle resuming after the anchor; low light parks (cycling and not), ignores alerts, mutes sounds, and resumes at once when lit.");
     puts("Alert focus: single page, in-page stepping, two-page alternation, return after a manual visit, full hold on clearing and alert-flagged bands passed.");
     puts("Alert hysteresis and sounds: flicker ignored, START/CLEAR once at the cycle change, cooldown, focus off and sounds off silent passed.");
     puts("Controls: reading selection, hold bound, history span shrink/grow, fast fill of long spans and rating bands passed.");
