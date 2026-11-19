@@ -30,6 +30,7 @@ AUTO_LOAD = ["switch", "sensor"]
 CONF_ATMOS_ID = "atmos_id"
 CONF_FADE_TIME = "fade_time"
 CONF_BOOT_COLOR = "boot_color"
+CONF_REVERSE = "reverse"
 CONF_AUTO_DIMMING = "auto_dimming"
 CONF_SENSOR = "sensor"
 CONF_BRIGHT_VALUE = "bright_value"
@@ -66,6 +67,8 @@ CONFIG_SCHEMA = light.light_schema(
         cv.Optional(CONF_FADE_TIME, default="500ms"): cv.positive_time_period_milliseconds,
         # Glow bouncing along the LEDs while the splash waits for the connection; "none" keeps them dark.
         cv.Optional(CONF_BOOT_COLOR, default="#18BCF2"): cv.Any(cv.one_of("none", lower=True), _rgb),
+        # The strip's first LED is on the right: the boot glow starts from the left.
+        cv.Optional(CONF_REVERSE, default=False): cv.boolean,
         cv.Optional(CONF_AUTO_DIMMING): AUTO_DIMMING_SCHEMA,
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -79,6 +82,7 @@ async def to_code(config):
     cg.add(var.set_fade_ms(config[CONF_FADE_TIME].total_milliseconds))
     boot = config[CONF_BOOT_COLOR]
     cg.add(var.set_boot_color(0 if boot == "none" else boot))
+    cg.add(var.set_reverse(config[CONF_REVERSE]))
     if dim := config.get(CONF_AUTO_DIMMING):
         cg.add(var.set_ambient_sensor(await cg.get_variable(dim[CONF_SENSOR])))
         cg.add(var.set_ambient_range(dim[CONF_BRIGHT_VALUE], dim[CONF_DARK_VALUE], dim[CONF_MIN_BRIGHTNESS]))

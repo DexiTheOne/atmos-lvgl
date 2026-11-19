@@ -19,6 +19,7 @@ class AtmosLed : public Component, public light::LightOutput {
   void set_light(light::LightState *state) { this->state_ = state; }
   void set_fade_ms(uint32_t ms) { this->fade_ms_ = ms; }
   void set_boot_color(uint32_t rgb) { this->boot_color_ = rgb; }
+  void set_reverse(bool reverse) { this->reverse_ = reverse; }
   void set_ambient_sensor(sensor::Sensor *s) { this->ambient_ = s; }
   void set_ambient_range(float bright, float dark, float min_brightness) {
     this->bright_value_ = bright;
@@ -63,6 +64,8 @@ class AtmosLed : public Component, public light::LightOutput {
   uint32_t boot_color_{0x18BCF2};
   float boot_k_[MAX_LEDS]{};  // each LED's bright glow (0..1) when last drawn
   bool boot_shown_{false};
+  bool reverse_{false};        // the strip's first LED is on the right
+  uint32_t boot_start_ms_{0};
   bool handed_off_{false};
   uint32_t handoff_ms_{0};    // nonzero while the boot glow hands over to the first page  // 0: dark until the UI starts
   float shown_[3]{};      // colour at full intensity outside transitions (0..255)

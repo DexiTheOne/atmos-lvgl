@@ -144,8 +144,13 @@ void AtmosLed::loop() {
       n = MAX_LEDS;
     float settle = 0.0f, fade = 0.0f;  // hand-off progress: glow to background, background to goal
     if (booting) {
-      float phase = float(fmod(now / 1000.0, double(BOOT_PERIOD_S))) / BOOT_PERIOD_S;
+      // The bounce starts at its first frame, on the first LED (the last when reversed).
+      if (!this->boot_shown_)
+        this->boot_start_ms_ = now;
+      float phase = float(fmod((now - this->boot_start_ms_) / 1000.0, double(BOOT_PERIOD_S))) / BOOT_PERIOD_S;
       float pos = float(n - 1) * (0.5f - 0.5f * cosf(6.2831853f * phase));
+      if (this->reverse_)
+        pos = float(n - 1) - pos;
       for (int led = 0; led < n; led++) {
         float d = (float(led) - pos) / BOOT_GLOW_WIDTH;
         this->boot_k_[led] = expf(-0.5f * d * d);  // the bright glow, 0..1

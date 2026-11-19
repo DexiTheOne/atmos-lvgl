@@ -323,6 +323,7 @@ light:
 
 atmos_led:
   light_id: status_strip
+  reverse: true  # LED 0 is on the right
   name: Status LEDs        # Home Assistant: power and a brightness slider
   fade_time: 500ms         # cross-fade when a rating changes on a still page
   auto_dimming:            # optional: limit by ambient light
@@ -343,7 +344,8 @@ atmos:
 
 While the boot splash waits for the connection, the LEDs show a boot animation:
 `boot_color` (default `#18BCF2`, Home Assistant blue; `none` for dark) glows on every LED at the light's brightness while a
-full-brightness glow bounces from the first LED to the last and back; when the UI starts, the bright
+full-brightness glow bounces from the first LED to the last and back (`reverse: true`
+when the strip's first LED is on the right, so it starts from the left); when the UI starts, the bright
 glow settles into the background, which then fades into the first page's colour. A reading with no rating yet (a sensor still
 starting) shows `boot_color` too. The strip light's `restore_mode` must be `ALWAYS_OFF`: a light starts white, so
 it would flash white at power-up before atmos_led sets a colour.

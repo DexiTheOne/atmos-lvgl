@@ -313,6 +313,7 @@ light:
 
 atmos_led:
   light_id: status_strip
+  reverse: true  # LED 0 is on the right
   name: Status LEDs  # brightness-only light: power and a brightness slider
   default_transition_length: 300ms
 
