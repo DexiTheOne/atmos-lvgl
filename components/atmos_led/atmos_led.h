@@ -60,7 +60,10 @@ class AtmosLed : public Component, public light::LightOutput {
   light::LightState *state_{nullptr};  // the strip
   light::LightState *own_{nullptr};    // this brightness-only light
   light::AddressableLight *out_{nullptr};
-  uint32_t fade_ms_{500};
+  uint32_t fade_ms_{800};
+  float fade_from_[3]{};            // colour when the still-page cross-fade started
+  uint32_t fade_goal_{0xFFFFFFFF};  // its goal (packed RGB)
+  uint32_t fade_start_ms_{0};
   uint32_t boot_color_{0x18BCF2};
   float boot_k_[MAX_LEDS]{};  // each LED's bright glow (0..1) when last drawn
   bool boot_shown_{false};

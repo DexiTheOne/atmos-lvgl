@@ -63,8 +63,9 @@ CONFIG_SCHEMA = light.light_schema(
     {
         cv.GenerateID(CONF_ATMOS_ID): cv.use_id(AtmosComponent),
         cv.Required(CONF_LIGHT_ID): cv.use_id(light.AddressableLightState),
-        # Cross-fade when the shown rating changes without a page transition.
-        cv.Optional(CONF_FADE_TIME, default="500ms"): cv.positive_time_period_milliseconds,
+        # Eased cross-fade when the colour changes on a still page (another underlined
+        # reading or a rating change); 800ms matches the underline and chart on screen.
+        cv.Optional(CONF_FADE_TIME, default="800ms"): cv.positive_time_period_milliseconds,
         # Glow bouncing along the LEDs while the splash waits for the connection; "none" keeps them dark.
         cv.Optional(CONF_BOOT_COLOR, default="#18BCF2"): cv.Any(cv.one_of("none", lower=True), _rgb),
         # The strip's first LED is on the right: the boot glow starts from the left.

@@ -109,11 +109,24 @@ void AtmosLed::loop() {
     for (int i = 0; i < 3; i++)
       this->shown_[i] = goal[i];
   } else {
-    // A rating change on the same page cross-fades over fade_time.
-    float step = this->fade_ms_ ? 255.0f * dt * 1000.0f / this->fade_ms_ : 255.0f;
+    // A change of colour on a still page (another underlined reading, or its rating)
+    // cross-fades over fade_time, eased in and out like the underline and chart on
+    // screen (0.8 s); a new goal mid-fade restarts from the colour shown.
+    uint32_t goal_packed = target;
+    if (goal_packed != this->fade_goal_) {
+      if (this->was_moving_ || this->fade_goal_ == 0xFFFFFFFF) {
+        for (int i = 0; i < 3; i++)
+          this->shown_[i] = goal[i];  // a transition already brought the goal in
+      }
+      for (int i = 0; i < 3; i++)
+        this->fade_from_[i] = this->shown_[i];
+      this->fade_goal_ = goal_packed;
+      this->fade_start_ms_ = now;
+    }
+    float p = this->fade_ms_ ? float(now - this->fade_start_ms_) / float(this->fade_ms_) : 1.0f;
+    p = p >= 1.0f ? 1.0f : p * p * (3.0f - 2.0f * p);
     for (int i = 0; i < 3; i++) {
-      float d = goal[i] - this->shown_[i];
-      this->shown_[i] += d > step ? step : d < -step ? -step : d;
+      this->shown_[i] = this->fade_from_[i] + (goal[i] - this->fade_from_[i]) * p;
       rgb[i] = this->shown_[i];
     }
   }

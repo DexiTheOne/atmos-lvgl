@@ -325,7 +325,7 @@ atmos_led:
   light_id: status_strip
   reverse: true  # LED 0 is on the right
   name: Status LEDs        # Home Assistant: power and a brightness slider
-  fade_time: 500ms         # cross-fade when a rating changes on a still page
+  fade_time: 800ms         # eased cross-fade on a still page, as the underline moves
   auto_dimming:            # optional: limit by ambient light
     sensor: ldr_voltage    # any sensor; here an LDR (to GND) divider on an ADC
     bright_value: 1.7      # at or beyond: the slider's brightness
