@@ -319,7 +319,7 @@ light:
     rgb_order: GRB
     pin: GPIO2
     num_leds: 4
-    restore_mode: ALWAYS_ON
+    restore_mode: ALWAYS_OFF  # dark until atmos_led sets a colour (on would flash white at boot)
 
 atmos_led:
   light_id: status_strip
@@ -340,6 +340,12 @@ atmos:
       - {max: 800, text: Good, led_color: "#00FF00"}
       - {min: 800, text: Poor, led_color: "#FF0000"}
 ```
+
+While the boot splash waits for the connection, the LEDs show a boot animation:
+`boot_color` (default `#2080FF`, `none` for dark) breathes along the strip, each LED a
+quarter cycle behind the last, and the intro transition fades it into the first page's
+colour. The strip light's `restore_mode` must be `ALWAYS_OFF`: a light starts white, so
+it would flash white at power-up before atmos_led sets a colour.
 
 Bands without `led_color` use green (level 0), amber (1) or red (2+). Page transitions
 fade the LEDs out over the first half of the display's transition and into the next

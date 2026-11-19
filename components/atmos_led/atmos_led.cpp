@@ -9,6 +9,11 @@ static const char *const TAG = "atmos_led";
 void AtmosLed::setup() {
   this->out_ = static_cast<light::AddressableLight *>(this->state_->get_output());
   this->last_ms_ = millis();
+  // Claim the strip's colour before switching it on: a light's default colour is
+  // white, so turning it on first would flash white until the first loop().
+  this->out_->set_effect_active(true);
+  this->out_->all() = Color::BLACK;
+  this->out_->schedule_show();
   // The strip only carries colours: keep it on at full brightness.
   this->state_->make_call().set_state(true).set_brightness(1.0f).set_transition_length(0).perform();
   // Gamma is applied here in float, then rounded once. The strip's own table maps
@@ -54,9 +59,18 @@ float AtmosLed::limit_(float level, float dt) {
 void AtmosLed::dump_config() {
   ESP_LOGCONFIG(TAG, "Atmos status LEDs: %d LEDs, fade %u ms", this->out_ ? this->out_->size() : 0,
                 (unsigned) this->fade_ms_);
-  if (this->ambient_ != nullptr)
+  if (this->ambient_ != nullptr) {
     ESP_LOGCONFIG(TAG, "  Auto dimming: full at %.3f, %.0f%% at %.3f, smoothing %u ms", this->bright_value_,
                   this->min_brightness_ * 100.0f, this->dark_value_, (unsigned) this->smoothing_ms_);
+  }
+}
+
+/* One channel (0..255, linear) to the strip's 8-bit value, with gamma applied in float. */
+uint8_t AtmosLed::encode_(float value) const {
+  float c = value / 255.0f;
+  c = c <= 0.0f ? 0.0f : c >= 1.0f ? 1.0f : (this->gamma_ > 0.0f ? powf(c, this->gamma_) : c);
+  uint32_t b = uint32_t(c * 255.0f + 0.5f);
+  return b == 0 && c > 0.0f ? 1 : b;  // as the strip's table: lit stays lit
 }
 
 /* Colour of the rating on screen (the destination's while moving); off before the UI starts. */
@@ -105,17 +119,39 @@ void AtmosLed::loop() {
     level = own.get_state() * own.get_brightness();
   }
   level = this->limit_(level, dt);
-  for (int i = 0; i < 3; i++)
-    rgb[i] *= level;
   auto v = this->state_->current_values;
   uint8_t brightness = light::to_uint8_scale(v.get_brightness() * v.get_state());
-  uint32_t packed = 0;
-  for (int i = 0; i < 3; i++) {
-    float c = rgb[i] / 255.0f;
-    c = c <= 0.0f ? 0.0f : c >= 1.0f ? 1.0f : (this->gamma_ > 0.0f ? powf(c, this->gamma_) : c);
-    uint32_t b = uint32_t(c * 255.0f + 0.5f);
-    packed = (packed << 8) | (b == 0 && c > 0.0f ? 1 : b);  // as the strip's table: lit stays lit
+
+  if (!this->atmos_->started() && this->boot_color_ != 0) {
+    // Boot animation, while the splash waits for the connection: the boot colour
+    // breathes along the strip, each LED a quarter cycle behind the one before, so a
+    // soft wave runs from the first LED to the last. When the UI starts, its intro
+    // transition fades from the boot colour (shown_) into the first page's.
+    float goal_boot[3] = {float((this->boot_color_ >> 16) & 0xFF), float((this->boot_color_ >> 8) & 0xFF),
+                          float(this->boot_color_ & 0xFF)};
+    for (int i = 0; i < 3; i++)
+      this->shown_[i] = goal_boot[i] * 0.6f;
+    float phase = float(fmod(now / 1000.0, double(BOOT_PERIOD_S))) / BOOT_PERIOD_S;
+    // Rise from dark over the first second after power-up.
+    float rise = now < 1000 ? now / 1000.0f : 1.0f;
+    int n = this->out_->size();
+    for (int led = 0; led < n; led++) {
+      float w = 0.5f - 0.5f * cosf(6.2831853f * (phase - 0.25f * float(led)));
+      float k = (0.15f + 0.85f * w) * rise * level;
+      uint8_t c[3];
+      for (int i = 0; i < 3; i++)
+        c[i] = this->encode_(goal_boot[i] * k);
+      (*this->out_)[led] = Color(c[0], c[1], c[2]);
+    }
+    this->written_ = 0xFFFFFFFF;  // force a write once the UI takes over
+    this->out_->update_state(this->state_);
+    this->out_->schedule_show();
+    return;
   }
+
+  uint32_t packed = 0;
+  for (int i = 0; i < 3; i++)
+    packed = (packed << 8) | this->encode_(rgb[i] * level);
   if (packed == this->written_ && brightness == this->written_brightness_)
     return;
   this->written_ = packed;

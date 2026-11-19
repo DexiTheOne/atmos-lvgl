@@ -309,7 +309,7 @@ light:
     rgb_order: GRB
     pin: GPIO1
     num_leds: 4
-    restore_mode: ALWAYS_ON
+    restore_mode: ALWAYS_OFF  # dark until atmos_led sets a colour (on would flash white at boot)
 
 atmos_led:
   light_id: status_strip

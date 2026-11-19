@@ -3,8 +3,9 @@ esp32_rmt_led_strip with chipset, num_leds and pin) shows the colour of the rati
 screen (each band's led_color under atmos: ratings:). On a page change the LEDs fade
 out over the first half of the transition and into the new colour over the second.
 atmos_led is itself a brightness-only light (Home Assistant: power and a brightness
-slider). Make the strip light internal; it is held on at full brightness and only
-carries the colours.
+slider). While the boot splash waits for the connection, boot_color breathes along
+the strip in a slow wave ("none" keeps it dark). Make the strip light internal; it is
+held on at full brightness and only carries the colours.
 
 auto_dimming: an ambient light sensor (any sensor, e.g. an LDR divider on an ADC)
 limits the LEDs without changing the light entity's brightness, so Home Assistant's
@@ -21,13 +22,14 @@ from esphome.components import light, sensor, switch
 import esphome.config_validation as cv
 from esphome.const import CONF_LIGHT_ID
 
-from esphome.components.atmos import AtmosComponent
+from esphome.components.atmos import AtmosComponent, _rgb
 
 DEPENDENCIES = ["atmos", "light"]
 AUTO_LOAD = ["switch", "sensor"]
 
 CONF_ATMOS_ID = "atmos_id"
 CONF_FADE_TIME = "fade_time"
+CONF_BOOT_COLOR = "boot_color"
 CONF_AUTO_DIMMING = "auto_dimming"
 CONF_SENSOR = "sensor"
 CONF_BRIGHT_VALUE = "bright_value"
@@ -62,6 +64,8 @@ CONFIG_SCHEMA = light.light_schema(
         cv.Required(CONF_LIGHT_ID): cv.use_id(light.AddressableLightState),
         # Cross-fade when the shown rating changes without a page transition.
         cv.Optional(CONF_FADE_TIME, default="500ms"): cv.positive_time_period_milliseconds,
+        # Wave on the LEDs while the splash waits for the connection; "none" keeps them dark.
+        cv.Optional(CONF_BOOT_COLOR, default="#2080FF"): cv.Any(cv.one_of("none", lower=True), _rgb),
         cv.Optional(CONF_AUTO_DIMMING): AUTO_DIMMING_SCHEMA,
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -73,6 +77,8 @@ async def to_code(config):
     cg.add(var.set_atmos(await cg.get_variable(config[CONF_ATMOS_ID])))
     cg.add(var.set_light(await cg.get_variable(config[CONF_LIGHT_ID])))
     cg.add(var.set_fade_ms(config[CONF_FADE_TIME].total_milliseconds))
+    boot = config[CONF_BOOT_COLOR]
+    cg.add(var.set_boot_color(0 if boot == "none" else boot))
     if dim := config.get(CONF_AUTO_DIMMING):
         cg.add(var.set_ambient_sensor(await cg.get_variable(dim[CONF_SENSOR])))
         cg.add(var.set_ambient_range(dim[CONF_BRIGHT_VALUE], dim[CONF_DARK_VALUE], dim[CONF_MIN_BRIGHTNESS]))

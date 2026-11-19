@@ -18,6 +18,7 @@ class AtmosLed : public Component, public light::LightOutput {
   void set_atmos(atmos::AtmosComponent *atmos) { this->atmos_ = atmos; }
   void set_light(light::LightState *state) { this->state_ = state; }
   void set_fade_ms(uint32_t ms) { this->fade_ms_ = ms; }
+  void set_boot_color(uint32_t rgb) { this->boot_color_ = rgb; }
   void set_ambient_sensor(sensor::Sensor *s) { this->ambient_ = s; }
   void set_ambient_range(float bright, float dark, float min_brightness) {
     this->bright_value_ = bright;
@@ -39,7 +40,9 @@ class AtmosLed : public Component, public light::LightOutput {
   float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }
 
  protected:
+  static constexpr float BOOT_PERIOD_S = 2.4f;  // one breath of the boot wave
   uint32_t target_() const;
+  uint8_t encode_(float value) const;
   float limit_(float level, float dt);
   sensor::Sensor *ambient_{nullptr};
   float bright_value_{0}, dark_value_{1}, min_brightness_{0.13f};
@@ -54,6 +57,7 @@ class AtmosLed : public Component, public light::LightOutput {
   light::LightState *own_{nullptr};    // this brightness-only light
   light::AddressableLight *out_{nullptr};
   uint32_t fade_ms_{500};
+  uint32_t boot_color_{0x2080FF};  // 0: dark until the UI starts
   float shown_[3]{};      // colour at full intensity outside transitions (0..255)
   float from_[3]{};       // colour when the current transition started
   bool was_moving_{false};
