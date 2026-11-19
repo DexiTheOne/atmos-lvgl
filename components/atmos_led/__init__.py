@@ -3,8 +3,8 @@ esp32_rmt_led_strip with chipset, num_leds and pin) shows the colour of the rati
 screen (each band's led_color under atmos: ratings:). On a page change the LEDs fade
 out over the first half of the transition and into the new colour over the second.
 atmos_led is itself a brightness-only light (Home Assistant: power and a brightness
-slider). While the boot splash waits for the connection, boot_color glows softly on
-every LED with a brighter glow bouncing along it ("none" keeps it dark). Make the strip light internal; it is
+slider). While the boot splash waits for the connection, boot_color glows on every
+LED at the light's brightness with a full-brightness glow bouncing along it ("none" keeps it dark). Make the strip light internal; it is
 held on at full brightness and only carries the colours.
 
 auto_dimming: an ambient light sensor (any sensor, e.g. an LDR divider on an ADC)

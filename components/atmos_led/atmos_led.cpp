@@ -148,7 +148,7 @@ void AtmosLed::loop() {
       float pos = float(n - 1) * (0.5f - 0.5f * cosf(6.2831853f * phase));
       for (int led = 0; led < n; led++) {
         float d = (float(led) - pos) / BOOT_GLOW_WIDTH;
-        this->boot_k_[led] = BOOT_BACKGROUND + (1.0f - BOOT_BACKGROUND) * expf(-0.5f * d * d);
+        this->boot_k_[led] = expf(-0.5f * d * d);  // the bright glow, 0..1
       }
       this->boot_shown_ = true;
     } else {
@@ -166,10 +166,14 @@ void AtmosLed::loop() {
     // Rise from dark over the first second after power-up.
     float rise = now < 1000 ? now / 1000.0f : 1.0f;
     for (int led = 0; led < n; led++) {
-      float k = this->boot_k_[led] + (BOOT_BACKGROUND - this->boot_k_[led]) * settle;
+      // The background is the boot colour at the light's level (brightness slider and
+      // auto-dimming); the bright glow rises from it to full brightness, whatever the
+      // level, while the light is on.
+      float glow = level > 0.0f ? this->boot_k_[led] * (1.0f - settle) : 0.0f;
+      float k = level + (1.0f - level) * glow;
       uint8_t c[3];
       for (int i = 0; i < 3; i++)
-        c[i] = this->encode_((boot[i] * k * (1.0f - fade) + goal[i] * fade) * rise * level);
+        c[i] = this->encode_((boot[i] * k * (1.0f - fade) + goal[i] * level * fade) * rise);
       (*this->out_)[led] = Color(c[0], c[1], c[2]);
     }
     this->was_moving_ = this->atmos_->started() && atmos_is_moving();
