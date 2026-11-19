@@ -40,7 +40,7 @@ class AtmosLed : public Component, public light::LightOutput {
   float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }
 
  protected:
-  static constexpr float BOOT_PERIOD_S = 2.4f;  // one breath of the boot wave
+  static constexpr float BOOT_PERIOD_S = 2.4f;  // one round trip of the boot glow
   uint32_t target_() const;
   uint8_t encode_(float value) const;
   float limit_(float level, float dt);

@@ -342,8 +342,8 @@ atmos:
 ```
 
 While the boot splash waits for the connection, the LEDs show a boot animation:
-`boot_color` (default `#2080FF`, `none` for dark) breathes along the strip, each LED a
-quarter cycle behind the last, and the intro transition fades it into the first page's
+`boot_color` (default `#2080FF`, `none` for dark) bounces as a glow from the first LED to
+the last and back, and the intro transition fades it into the first page's
 colour. The strip light's `restore_mode` must be `ALWAYS_OFF`: a light starts white, so
 it would flash white at power-up before atmos_led sets a colour.
 

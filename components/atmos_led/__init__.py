@@ -3,8 +3,8 @@ esp32_rmt_led_strip with chipset, num_leds and pin) shows the colour of the rati
 screen (each band's led_color under atmos: ratings:). On a page change the LEDs fade
 out over the first half of the transition and into the new colour over the second.
 atmos_led is itself a brightness-only light (Home Assistant: power and a brightness
-slider). While the boot splash waits for the connection, boot_color breathes along
-the strip in a slow wave ("none" keeps it dark). Make the strip light internal; it is
+slider). While the boot splash waits for the connection, boot_color bounces along
+the strip as a glow ("none" keeps it dark). Make the strip light internal; it is
 held on at full brightness and only carries the colours.
 
 auto_dimming: an ambient light sensor (any sensor, e.g. an LDR divider on an ADC)
@@ -64,7 +64,7 @@ CONFIG_SCHEMA = light.light_schema(
         cv.Required(CONF_LIGHT_ID): cv.use_id(light.AddressableLightState),
         # Cross-fade when the shown rating changes without a page transition.
         cv.Optional(CONF_FADE_TIME, default="500ms"): cv.positive_time_period_milliseconds,
-        # Wave on the LEDs while the splash waits for the connection; "none" keeps them dark.
+        # Glow bouncing along the LEDs while the splash waits for the connection; "none" keeps them dark.
         cv.Optional(CONF_BOOT_COLOR, default="#2080FF"): cv.Any(cv.one_of("none", lower=True), _rgb),
         cv.Optional(CONF_AUTO_DIMMING): AUTO_DIMMING_SCHEMA,
     }

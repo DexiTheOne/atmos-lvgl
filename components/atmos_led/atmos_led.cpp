@@ -123,9 +123,9 @@ void AtmosLed::loop() {
   uint8_t brightness = light::to_uint8_scale(v.get_brightness() * v.get_state());
 
   if (!this->atmos_->started() && this->boot_color_ != 0) {
-    // Boot animation, while the splash waits for the connection: the boot colour
-    // breathes along the strip, each LED a quarter cycle behind the one before, so a
-    // soft wave runs from the first LED to the last. When the UI starts, its intro
+    // Boot animation, while the splash waits for the connection: a glow in the boot
+    // colour bounces from the first LED to the last and back, easing at each end, its
+    // light spread over the neighbouring LEDs. When the UI starts, its intro
     // transition fades from the boot colour (shown_) into the first page's.
     float goal_boot[3] = {float((this->boot_color_ >> 16) & 0xFF), float((this->boot_color_ >> 8) & 0xFF),
                           float(this->boot_color_ & 0xFF)};
@@ -135,9 +135,10 @@ void AtmosLed::loop() {
     // Rise from dark over the first second after power-up.
     float rise = now < 1000 ? now / 1000.0f : 1.0f;
     int n = this->out_->size();
+    float pos = float(n - 1) * (0.5f - 0.5f * cosf(6.2831853f * phase));
     for (int led = 0; led < n; led++) {
-      float w = 0.5f - 0.5f * cosf(6.2831853f * (phase - 0.25f * float(led)));
-      float k = (0.15f + 0.85f * w) * rise * level;
+      float d = (float(led) - pos) / 0.8f;  // distance in glow widths
+      float k = (0.06f + 0.94f / (1.0f + d * d * d * d)) * rise * level;
       uint8_t c[3];
       for (int i = 0; i < 3; i++)
         c[i] = this->encode_(goal_boot[i] * k);
