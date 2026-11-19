@@ -342,12 +342,12 @@ atmos:
 ```
 
 While the boot splash waits for the connection, the LEDs show a boot animation:
-`boot_color` (default `#2080FF`, `none` for dark) bounces as a glow from the first LED to
-the last and back, and the intro transition fades it into the first page's
-colour. The strip light's `restore_mode` must be `ALWAYS_OFF`: a light starts white, so
+`boot_color` (default `#2080FF`, `none` for dark) glows softly on every LED while a brighter
+glow bounces from the first LED to the last and back; when the UI starts, the bright
+glow settles into the soft one, which then fades into the first page's colour. The strip light's `restore_mode` must be `ALWAYS_OFF`: a light starts white, so
 it would flash white at power-up before atmos_led sets a colour.
 
-Bands without `led_color` use green (level 0), amber (1) or red (2+). Page transitions
+Bands without `led_color` use their built-in colour (the temperature, humidity and pressure comfort bands) or green (level 0), amber (1) or red (2+). `marker:` (level, check, snowflake, cool, sun, flame, dry, drop, drops) picks the overview tile marker. Comfort readings never alert and do not set the overview LED. Page transitions
 fade the LEDs out over the first half of the display's transition and into the next
 page's colour over the second. `atmos_led` is itself a brightness-only light (any
 light option, such as `default_transition_length` or `restore_mode`, applies), so Home

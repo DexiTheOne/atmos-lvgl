@@ -40,7 +40,11 @@ class AtmosLed : public Component, public light::LightOutput {
   float get_setup_priority() const override { return setup_priority::PROCESSOR - 1; }
 
  protected:
-  static constexpr float BOOT_PERIOD_S = 2.4f;  // one round trip of the boot glow
+  static constexpr float BOOT_PERIOD_S = 3.2f;     // one round trip of the bright glow
+  static constexpr float BOOT_BACKGROUND = 0.35f;  // soft glow on every LED (before gamma)
+  static constexpr float BOOT_GLOW_WIDTH = 0.8f;   // bright glow's spread, in LEDs
+  static constexpr uint32_t HANDOFF_MS = 1500;     // glow settles, then fades into the page
+  static constexpr int MAX_LEDS = 16;
   uint32_t target_() const;
   uint8_t encode_(float value) const;
   float limit_(float level, float dt);
@@ -57,7 +61,11 @@ class AtmosLed : public Component, public light::LightOutput {
   light::LightState *own_{nullptr};    // this brightness-only light
   light::AddressableLight *out_{nullptr};
   uint32_t fade_ms_{500};
-  uint32_t boot_color_{0x2080FF};  // 0: dark until the UI starts
+  uint32_t boot_color_{0x2080FF};
+  float boot_k_[MAX_LEDS]{};  // each LED's boot intensity when last drawn
+  bool boot_shown_{false};
+  bool handed_off_{false};
+  uint32_t handoff_ms_{0};    // nonzero while the boot glow hands over to the first page  // 0: dark until the UI starts
   float shown_[3]{};      // colour at full intensity outside transitions (0..255)
   float from_[3]{};       // colour when the current transition started
   bool was_moving_{false};

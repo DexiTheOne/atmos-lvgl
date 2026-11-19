@@ -88,6 +88,10 @@ void AtmosLed::loop() {
   uint32_t target = this->target_();
   float goal[3] = {float((target >> 16) & 0xFF), float((target >> 8) & 0xFF), float(target & 0xFF)};
   float rgb[3];
+  if (this->boot_shown_ && this->atmos_->started() && this->handoff_ms_ == 0 && !this->handed_off_) {
+    this->handoff_ms_ = now != 0 ? now : 1;
+    this->handed_off_ = true;
+  }
   bool moving = this->atmos_->started() && atmos_is_moving();
   if (moving) {
     // Fade out what was shown over the first half of the transition, in over the second.
@@ -122,29 +126,49 @@ void AtmosLed::loop() {
   auto v = this->state_->current_values;
   uint8_t brightness = light::to_uint8_scale(v.get_brightness() * v.get_state());
 
-  if (!this->atmos_->started() && this->boot_color_ != 0) {
-    // Boot animation, while the splash waits for the connection: a glow in the boot
-    // colour bounces from the first LED to the last and back, easing at each end, its
-    // light spread over the neighbouring LEDs. When the UI starts, its intro
-    // transition fades from the boot colour (shown_) into the first page's.
-    float goal_boot[3] = {float((this->boot_color_ >> 16) & 0xFF), float((this->boot_color_ >> 8) & 0xFF),
-                          float(this->boot_color_ & 0xFF)};
-    for (int i = 0; i < 3; i++)
-      this->shown_[i] = goal_boot[i] * 0.6f;
-    float phase = float(fmod(now / 1000.0, double(BOOT_PERIOD_S))) / BOOT_PERIOD_S;
+  bool booting = !this->atmos_->started() && this->boot_color_ != 0;
+  if (booting || this->handoff_ms_ != 0) {
+    // Boot animation, while the splash waits for the connection: a soft glow of the boot
+    // colour on every LED, with a brighter glow bouncing from the first LED to the last
+    // and back, easing at each end. When the UI starts, the bright glow settles into
+    // the soft background, which then cross-fades into the first page's colour.
+    float boot[3] = {float((this->boot_color_ >> 16) & 0xFF), float((this->boot_color_ >> 8) & 0xFF),
+                     float(this->boot_color_ & 0xFF)};
+    int n = this->out_->size();
+    if (n > MAX_LEDS)
+      n = MAX_LEDS;
+    float settle = 0.0f, fade = 0.0f;  // hand-off progress: glow to background, background to goal
+    if (booting) {
+      float phase = float(fmod(now / 1000.0, double(BOOT_PERIOD_S))) / BOOT_PERIOD_S;
+      float pos = float(n - 1) * (0.5f - 0.5f * cosf(6.2831853f * phase));
+      for (int led = 0; led < n; led++) {
+        float d = (float(led) - pos) / BOOT_GLOW_WIDTH;
+        this->boot_k_[led] = BOOT_BACKGROUND + (1.0f - BOOT_BACKGROUND) * expf(-0.5f * d * d);
+      }
+      this->boot_shown_ = true;
+    } else {
+      float p = float(now - this->handoff_ms_) / float(HANDOFF_MS);
+      p = p > 1.0f ? 1.0f : p;
+      p = p * p * (3.0f - 2.0f * p);  // ease in and out
+      settle = p < 0.4f ? p / 0.4f : 1.0f;
+      fade = p < 0.4f ? 0.0f : (p - 0.4f) / 0.6f;
+      if (p >= 1.0f && !atmos_is_moving()) {
+        this->handoff_ms_ = 0;  // the normal path takes over from the goal colour
+        for (int i = 0; i < 3; i++)
+          this->shown_[i] = goal[i];
+      }
+    }
     // Rise from dark over the first second after power-up.
     float rise = now < 1000 ? now / 1000.0f : 1.0f;
-    int n = this->out_->size();
-    float pos = float(n - 1) * (0.5f - 0.5f * cosf(6.2831853f * phase));
     for (int led = 0; led < n; led++) {
-      float d = (float(led) - pos) / 0.8f;  // distance in glow widths
-      float k = (0.06f + 0.94f / (1.0f + d * d * d * d)) * rise * level;
+      float k = this->boot_k_[led] + (BOOT_BACKGROUND - this->boot_k_[led]) * settle;
       uint8_t c[3];
       for (int i = 0; i < 3; i++)
-        c[i] = this->encode_(goal_boot[i] * k);
+        c[i] = this->encode_((boot[i] * k * (1.0f - fade) + goal[i] * fade) * rise * level);
       (*this->out_)[led] = Color(c[0], c[1], c[2]);
     }
-    this->written_ = 0xFFFFFFFF;  // force a write once the UI takes over
+    this->was_moving_ = this->atmos_->started() && atmos_is_moving();
+    this->written_ = 0xFFFFFFFF;  // force a write once the normal path takes over
     this->out_->update_state(this->state_);
     this->out_->schedule_show();
     return;
