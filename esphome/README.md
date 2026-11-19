@@ -354,3 +354,7 @@ falls linearly to `min_brightness` at `dark_value` (either direction works). A s
 below `min_brightness` is not raised. On the device an LDR between GPIO3 and GND (fixed
 resistor to 3.3 V) read 0.05 V under a flashlight, 1.7 V in a lit room and the ADC's
 3.16 V ceiling in the dark (12 dB attenuation).
+
+atmos_led applies the strip light's `gamma_correct` itself, in float, and switches the
+strip's gamma table off: the table maps already-rounded 8-bit values, so low levels
+moved in visible steps while dimming.

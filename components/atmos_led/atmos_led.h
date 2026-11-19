@@ -44,6 +44,7 @@ class AtmosLed : public Component, public light::LightOutput {
   sensor::Sensor *ambient_{nullptr};
   float bright_value_{0}, dark_value_{1}, min_brightness_{0.13f};
   uint32_t smoothing_ms_{5000};
+  float gamma_{2.8f};    // the strip light's gamma_correct, applied in float
   bool auto_dim_{true};
   float raw_{NAN};       // latest ambient reading
   float smooth_{NAN};    // smoothed ambient reading

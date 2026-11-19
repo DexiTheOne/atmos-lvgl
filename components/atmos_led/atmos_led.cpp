@@ -11,6 +11,15 @@ void AtmosLed::setup() {
   this->last_ms_ = millis();
   // The strip only carries colours: keep it on at full brightness.
   this->state_->make_call().set_state(true).set_brightness(1.0f).set_transition_length(0).perform();
+  // Gamma is applied here in float, then rounded once. The strip's own table maps
+  // already-rounded 8-bit values, so at low levels many inputs land on the same
+  // output (gamma 2.8: inputs below about 27 give 0 or 1) and dimming moves in
+  // visible steps. Take the strip's gamma and switch its table off.
+  this->gamma_ = this->state_->get_gamma_correct();
+#ifdef USE_LIGHT_GAMMA_LUT
+  this->state_->set_gamma_table(nullptr);
+  this->out_->setup_state(this->state_);
+#endif
   if (this->ambient_ != nullptr)
     this->ambient_->add_on_state_callback([this](float x) { this->raw_ = x; });
 }
@@ -93,7 +102,13 @@ void AtmosLed::loop() {
     rgb[i] *= level;
   auto v = this->state_->current_values;
   uint8_t brightness = light::to_uint8_scale(v.get_brightness() * v.get_state());
-  uint32_t packed = (uint32_t(rgb[0] + 0.5f) << 16) | (uint32_t(rgb[1] + 0.5f) << 8) | uint32_t(rgb[2] + 0.5f);
+  uint32_t packed = 0;
+  for (int i = 0; i < 3; i++) {
+    float c = rgb[i] / 255.0f;
+    c = c <= 0.0f ? 0.0f : c >= 1.0f ? 1.0f : (this->gamma_ > 0.0f ? powf(c, this->gamma_) : c);
+    uint32_t b = uint32_t(c * 255.0f + 0.5f);
+    packed = (packed << 8) | (b == 0 && c > 0.0f ? 1 : b);  // as the strip's table: lit stays lit
+  }
   if (packed == this->written_ && brightness == this->written_brightness_)
     return;
   this->written_ = packed;
