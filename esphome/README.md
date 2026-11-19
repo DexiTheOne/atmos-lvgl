@@ -344,7 +344,8 @@ atmos:
 While the boot splash waits for the connection, the LEDs show a boot animation:
 `boot_color` (default `#18BCF2`, Home Assistant blue; `none` for dark) glows softly on every LED while a brighter
 glow bounces from the first LED to the last and back; when the UI starts, the bright
-glow settles into the soft one, which then fades into the first page's colour. The strip light's `restore_mode` must be `ALWAYS_OFF`: a light starts white, so
+glow settles into the soft one, which then fades into the first page's colour. A reading with no rating yet (a sensor still
+starting) shows `boot_color` too. The strip light's `restore_mode` must be `ALWAYS_OFF`: a light starts white, so
 it would flash white at power-up before atmos_led sets a colour.
 
 Bands without `led_color` use their built-in colour (the temperature, humidity and pressure comfort bands) or green (level 0), amber (1) or red (2+). `marker:` (level, check, snowflake, cool, sun, flame, dry, drop, drops) picks the overview tile marker. Comfort readings never alert and do not set the overview LED. Page transitions

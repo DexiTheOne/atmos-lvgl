@@ -73,12 +73,17 @@ uint8_t AtmosLed::encode_(float value) const {
   return b == 0 && c > 0.0f ? 1 : b;  // as the strip's table: lit stays lit
 }
 
-/* Colour of the rating on screen (the destination's while moving); off before the UI starts. */
+/* Colour of the rating on screen (the destination's while moving), the boot colour while
+   it has no rating yet; off before the UI starts. */
 uint32_t AtmosLed::target_() const {
   if (!this->atmos_->started())
     return 0;
   int scene = atmos_is_moving() ? atmos_destination() : atmos_scene();
-  return this->atmos_->led_color(atmos_led_reading(scene));
+  int reading = atmos_led_reading(scene);
+  // No rating yet (a sensor still starting, e.g. the SEN6x's first minute): the boot colour.
+  if (reading < 0 || atmos_band_index(reading) < 0)
+    return this->boot_color_;
+  return this->atmos_->led_color(reading);
 }
 
 void AtmosLed::loop() {
