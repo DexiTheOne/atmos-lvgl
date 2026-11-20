@@ -324,6 +324,19 @@ Real panel (`atmos`, over OTA), with Wi-Fi, the API and sensors running.
 - No scene's frames fit in one refresh yet (PROFILE still 31–48 ms), so everything runs every second refresh; still scenes at 37–42 ms of work plus housekeeping miss the 58 ms slot on a fifth to a third of frames, then show for three refreshes. Rendering speed is the next limit.
 - UI busy 65–68 % of the CPU.
 
+## Results: 2026-11-20, rendering speed-ups
+
+Same device and settings as above (TE pacing, every second refresh), after profiling still frames by part:
+
+- **Still frames redrew the whole page.** LVGL widens redrawn areas to whole bytes on the 1-bit display, so the clip never lay inside the animated box. Fixed: still-frame draw went from 26-41 ms to 3-15 ms per page.
+- **Data changes redraw only their band** (history panel, header and body), not the page.
+- **Text:** ink measurements are remembered and strings are baked to 1-bit bitmaps; headers 11.6 to 1.5 ms (CO2), overview redraw 33 to 10-13 ms.
+- **Charts:** cursor interpolation, straight lines as spans, remembered caption width.
+- **Pre-render:** one screen band per step (removed 57-64 ms steps).
+- **Transitions:** single-precision isqrt seed; the ribbon swell from column spans (67-78 to under 51 ms).
+
+Every change was pixel-identical across 237 simulator captures. Result (10 transitions, about 4 minutes): **every transition at 17.1 fps** (render 17-27 ms average, 75 ms worst), the driver's late pushes 0-4 per 10 s, mostly scenes trying every refresh (34 Hz) and being demoted.
+
 ## Status LEDs (atmos_led)
 
 `atmos_led` colours an addressable LED strip with the rating on screen. Configure the
