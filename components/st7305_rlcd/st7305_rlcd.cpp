@@ -356,9 +356,11 @@ void ST7305RLCD::init_display_() {
   this->send_data_(0x80);
   this->send_data_(0xE9);
 
-  // Frame Rate Control
+  // Frame Rate Control: HFRA (bit 4) picks the high-power refresh, 25.5 or 51 Hz with
+  // the OSC setting above (OSCSW=000); LFRA=2 is 1 Hz in low power. 51 Hz is the
+  // controller's maximum (datasheet v0.2, FRCTRL/OSCSET).
   this->send_command_(0xB2);
-  this->send_data_(0x02);
+  this->send_data_(this->fast_refresh_ ? 0x12 : 0x02);
 
   // Gate EQ Control (High Power Mode) - Update period timing
   this->send_command_(0xB3);

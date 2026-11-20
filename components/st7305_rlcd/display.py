@@ -20,6 +20,7 @@ DEPENDENCIES = ["spi"]
 AUTO_LOAD = ["display"]
 
 CONF_ORIENTATION = "orientation"
+CONF_REFRESH_RATE = "refresh_rate"
 
 st7305_rlcd_ns = cg.esphome_ns.namespace("st7305_rlcd")
 ST7305RLCD = st7305_rlcd_ns.class_(
@@ -69,6 +70,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_WIDTH): cv.int_range(min=1, max=800),
             cv.Optional(CONF_HEIGHT): cv.int_range(min=1, max=800),
             cv.Optional(CONF_ORIENTATION): cv.enum(ORIENTATIONS, upper=True),
+            # Panel refresh in high-power mode (the controller offers 25.5 or 51 Hz).
+            cv.Optional(CONF_REFRESH_RATE, default="51Hz"): cv.one_of("51Hz", "25.5Hz"),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -92,6 +95,7 @@ async def to_code(config):
         cg.add(var.set_reset_pin(reset_pin))
 
     cg.add(var.set_model(config[CONF_MODEL]))
+    cg.add(var.set_fast_refresh(config[CONF_REFRESH_RATE] == "51Hz"))
 
     if config[CONF_MODEL] == "CUSTOM":
         cg.add(var.set_width(config[CONF_WIDTH]))
