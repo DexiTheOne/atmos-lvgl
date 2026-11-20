@@ -53,16 +53,13 @@ void FrameStats::log(const char *name, uint32_t period) const {
 
 void AtmosComponent::setup() {
   if (this->display_test_) {
-    this->test_te_ = this->panel_->has_te();
-    if (this->test_te_)
-      ESP_LOGW(TAG, "Display test: UI disabled, one frame per panel TE pulse");
+    this->te_frames_ = this->panel_->has_te();
+    if (this->te_frames_)
+      ESP_LOGW(TAG, "Display test: UI disabled, frames on the panel's TE pulses");
     else
       ESP_LOGW(TAG, "Display test: UI disabled, target period %u us", (unsigned) this->period_us_);
     this->last_report_ms_ = millis();
-    if (this->test_te_) {
-      this->test_hfl_.start();  // poll TE on every loop pass
-      return;
-    }
+    this->last_target_ = this->panel_->te_count();
     this->next_step_us_ = micros();
     this->set_timeout("frame", 0, [this]() { this->test_frame_(); });
     return;
@@ -125,6 +122,9 @@ void AtmosComponent::wait_ready_() {
            (unsigned) (millis() - this->splash_ms_), timed_out ? "timed out" : "connected",
            (micros() - start) / 1000.0f, (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned) heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  // With the panel's TE signal, frames are timed to its refreshes (frame_te_()).
+  this->te_frames_ = this->panel_->has_te();
+  this->last_target_ = this->panel_->te_count();
   this->set_timeout("frame", 0, [this]() {
     this->next_step_us_ = micros();
     this->frame_();
@@ -349,19 +349,23 @@ void AtmosComponent::dump_config() {
                 (unsigned) this->splash_ms_, (unsigned) this->ui_ms_);
 }
 
-/* Direct mode: px_map is the whole frame; only the rows LVGL redrew are converted.
-   The panel buffer is pushed once per refresh, after the last area. */
+/* Direct mode: px_map is the whole frame; only the areas LVGL redrew are converted,
+   growing the window the next push sends. With TE pacing frame_te_() presents the
+   frame; otherwise it is sent at once, after the last area (by DMA). */
 void AtmosComponent::flush_cb_(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
   auto *self = static_cast<AtmosComponent *>(lv_display_get_user_data(disp));
   uint32_t now = micros();
   self->render_us_ += now - mark_us;
-  self->panel_->load_rows_i1(px_map + 8, area->y1, area->y2);
+  self->panel_->load_rows_i1(px_map + 8, area->y1, area->y2, area->x1, area->x2);
   uint32_t converted = micros();
   self->convert_us_ += converted - now;
   if (lv_display_flush_is_last(disp)) {
-    self->panel_->push_buffer();
-    self->push_us_ += micros() - converted;
     self->frame_flushed_ = true;
+    if (!self->te_frames_) {
+      while (!self->panel_->present(0))  // the previous push is still running
+        delayMicroseconds(100);
+      self->push_us_ += micros() - converted;
+    }
   }
   mark_us = micros();
   lv_display_flush_ready(disp);
@@ -395,6 +399,8 @@ void AtmosComponent::on_display_event_(lv_event_code_t code) {
     this->still_cost_[this->frame_scene_] += cost;
     this->still_n_[this->frame_scene_]++;
   }
+  if (this->te_frames_)
+    return;  // frame_te_() counts frames when their push completes
   for (FrameStats *s : {moving ? &this->transition_ : &this->still_,
                         moving ? &this->window_transition_ : &this->window_still_})
     s->add(interval, this->render_us_, this->convert_us_, this->push_us_, this->period_us_);
@@ -406,6 +412,10 @@ void AtmosComponent::on_display_event_(lv_event_code_t code) {
    until the next frame is due, so Wi-Fi, the API and sensors get the CPU between frames
    and a frame never starts earlier than its period (the frame-rate cap). */
 void AtmosComponent::frame_() {
+  if (this->te_frames_) {
+    this->frame_te_();
+    return;
+  }
   uint32_t now = micros(), step_us = 0, refr_us = 0;
   int pre = -1;
   // Fixed-cadence model steps: one step per frame period. A step that is a full period
@@ -434,17 +444,8 @@ void AtmosComponent::frame_() {
     lv_refr_now(this->disp_);  // render now, not on LVGL's own refresh timer
     refr_us = micros() - refr_start;
   }
-  uint32_t timer_start = micros();
-  lv_timer_handler();
-  uint32_t timer_us = micros() - timer_start, publish_start = micros();
-  this->publish_selection_();
-  if (this->alert_sensor_ != nullptr && this->started_)
-    this->alert_sensor_->publish_state(atmos_alert_active());  // publishes only on change
-  for (int e; (e = atmos_poll_event()) != ATMOS_EVT_NONE;) {
-    ESP_LOGI(TAG, "Alert sound: %s", e == ATMOS_EVT_ALERT_START ? "start" : "clear");
-    (e == ATMOS_EVT_ALERT_START ? this->alert_start_trigger_ : this->alert_clear_trigger_).trigger();
-  }
-  uint32_t publish_us = micros() - publish_start;
+  uint32_t timer_us, publish_us;
+  this->service_(timer_us, publish_us);
   // Stall finder: where a slow frame's time went (model step incl. pre-render, LVGL
   // refresh = render + convert + push, LVGL timers, select publish).
   if (this->frame_stats_ && micros() - now > 150000)
@@ -452,12 +453,37 @@ void AtmosComponent::frame_() {
              (micros() - now) / 1000.0f, step_us / 1000.0f, pre, refr_us / 1000.0f, this->render_us_ / 1000.0f,
              this->convert_us_ / 1000.0f, this->push_us_ / 1000.0f, timer_us / 1000.0f, publish_us / 1000.0f,
              atmos_scene(), (int) atmos_is_moving());
+  this->finish_frame_();
+  uint32_t done = micros();
+  this->busy_us_ += done - now;
+  int32_t wait = (int32_t) (this->next_step_us_ - done);
+  this->set_timeout("frame", wait > 0 ? (wait + 999) / 1000 : 0, [this]() { this->frame_(); });
+}
+
+/* Housekeeping after a refresh: LVGL timers, Home Assistant state, alert events. */
+void AtmosComponent::service_(uint32_t &timer_us, uint32_t &publish_us) {
+  uint32_t timer_start = micros();
+  lv_timer_handler();
+  timer_us = micros() - timer_start;
+  uint32_t publish_start = micros();
+  this->publish_selection_();
+  if (this->alert_sensor_ != nullptr && this->started_)
+    this->alert_sensor_->publish_state(atmos_alert_active());  // publishes only on change
+  for (int e; (e = atmos_poll_event()) != ATMOS_EVT_NONE;) {
+    ESP_LOGI(TAG, "Alert sound: %s", e == ATMOS_EVT_ALERT_START ? "start" : "clear");
+    (e == ATMOS_EVT_ALERT_START ? this->alert_start_trigger_ : this->alert_clear_trigger_).trigger();
+  }
+  publish_us = micros() - publish_start;
+}
+
+/* Per-transition log line and the periodic report. */
+void AtmosComponent::finish_frame_() {
   bool moving = atmos_is_moving();
   if (this->frame_stats_ && this->was_moving_ && !moving) {
     this->transition_index_++;
     char name[24];
     snprintf(name, sizeof name, "trans #%u", (unsigned) this->transition_index_);
-    this->current_transition_.log(name, this->period_us_);
+    this->current_transition_.log(name, this->expected_us_());
     this->current_transition_ = FrameStats();
   }
   this->was_moving_ = moving;
@@ -465,9 +491,132 @@ void AtmosComponent::frame_() {
     this->last_report_ms_ = millis();
     this->report_();
   }
-  uint32_t done = micros();
-  this->busy_us_ += done - now;
-  int32_t wait = (int32_t) (this->next_step_us_ - done);
+}
+
+uint32_t AtmosComponent::te_period_() const {
+  uint32_t p = this->panel_->te_period_us();
+  return p != 0 ? p : 29240;  // 34.2 Hz, measured on the RLCD at 32 Hz nominal
+}
+
+/* Frame period as a whole number of refreshes: frame_period rounded to the nearest
+   refresh count (at least one). */
+uint32_t AtmosComponent::min_div_() const {
+  uint32_t period = this->te_period_();
+  return std::max<uint32_t>(1, (this->period_us_ + period / 2) / period);
+}
+
+uint32_t AtmosComponent::expected_us_() const {
+  return this->te_frames_ ? this->div_ * this->te_period_() : this->period_us_;
+}
+
+/* A push finished since the last call: its interval in refreshes, lateness and timing.
+   Returns false when there is none. */
+bool AtmosComponent::collect_push_(uint32_t &interval, uint32_t &lag, uint32_t &push, bool &late) {
+  auto *p = this->panel_;
+  uint32_t n = p->pushes();
+  if (n == this->seen_pushes_ || p->busy())
+    return false;
+  this->seen_pushes_ = n;
+  uint32_t te = p->last_push_te(), edge = p->last_push_edge_us();
+  interval = this->last_push_te_ != 0 ? edge - this->last_push_te_ : this->expected_us_();
+  this->last_push_te_ = edge;  // micros() of the pulse (or present) it went out at
+  lag = p->last_push_start_us() - p->last_push_edge_us();
+  push = p->last_push_us();
+  late = (int32_t) (te - p->last_push_target()) > 0;
+  this->push_bytes_sum_ += p->last_push_bytes();
+  this->push_n_++;
+  if (late)
+    this->late_pushes_++;
+  return true;
+}
+
+/* TE-paced frames: each frame is shown from a chosen panel refresh (its target TE
+   pulse), every div_ refreshes. The model steps by the refreshes since the previous
+   frame, so motion matches what the panel shows even when a frame runs late. The
+   frame renders into the panel buffer, present() packs the changed window for the
+   push task, which sends it by DMA at the target pulse; the next frame starts at that
+   pulse, so rendering and the push overlap. */
+void AtmosComponent::frame_te_() {
+  uint32_t now = micros();
+  auto *p = this->panel_;
+  if (this->pending_) {
+    // The previous frame is drawn but its predecessor's push is not done yet.
+    if (!p->present(this->last_target_)) {
+      this->set_timeout("frame", 1, [this]() { this->frame_(); });
+      return;
+    }
+    this->pending_ = false;
+  }
+  uint32_t interval, lag, push;
+  bool late;
+  if (this->collect_push_(interval, lag, push, late)) {
+    bool moving = this->pushed_moving_;
+    uint32_t expected = this->div_ * this->te_period_();
+    for (FrameStats *s : {moving ? &this->transition_ : &this->still_,
+                          moving ? &this->window_transition_ : &this->window_still_})
+      s->add(interval, this->last_work_, lag, push, expected);
+    if (moving)
+      this->current_transition_.add(interval, this->last_work_, lag, push, expected);
+    if (late && this->div_ == 1)
+      this->div_ = 2;  // until the next scene or transition
+  }
+
+  uint32_t period = this->te_period_(), min_div = this->min_div_();
+  bool moving = atmos_is_moving();
+  int key = atmos_scene() * 2 + (moving ? 1 : 0);
+  if (key != this->rate_key_ || this->div_ < min_div) {
+    // Rate per scene and transition, chosen as it starts: every refresh when its
+    // frames have cost under 80 % of one, else every second (or frame_period's).
+    this->rate_key_ = key;
+    uint32_t cost = key >= 0 && key < 12 ? this->cost_ema_[key] : 0;
+    this->div_ = min_div > 1 ? min_div : (cost != 0 && cost < period * 4 / 5 ? 1 : 2);
+  }
+  uint32_t tick = p->te_count();
+  uint32_t target = this->last_target_ + this->div_;
+  if ((int32_t) (target - (tick + 1)) < 0)
+    target = tick + 1;  // late: the next refresh
+  uint32_t ticks = target - this->last_target_;
+  this->last_target_ = target;
+
+  if (this->has_sensors_ && this->values_dirty_)
+    this->push_readings_();
+#ifdef USE_WIFI
+  auto *wifi = wifi::global_wifi_component;
+  atmos_set_wifi(wifi != nullptr && wifi->is_connected() ? atmos_wifi_bars(wifi->wifi_rssi()) : -1);
+#endif
+  uint32_t work_start = micros();
+  atmos_step(ticks * (double) period / 1e6);
+  int pre = atmos_step_prerendered();
+  if (pre >= 0) {
+    this->pre_cost_[pre] += micros() - work_start;
+    this->pre_n_[pre]++;
+  }
+  this->frame_flushed_ = false;
+  this->convert_us_ = 0;
+  lv_refr_now(this->disp_);
+  uint32_t work = micros() - work_start;
+  if (pre < 0 && key >= 0 && key < 12) {
+    uint32_t &ema = this->cost_ema_[key];
+    ema = ema == 0 ? work : (uint32_t) ((int32_t) ema + ((int32_t) work - (int32_t) ema) / 8);
+  }
+  uint32_t timer_us, publish_us;
+  this->service_(timer_us, publish_us);
+  if (this->frame_flushed_) {
+    this->last_work_ = work;
+    this->pushed_moving_ = moving || atmos_is_moving();
+    if (!p->present(target))
+      this->pending_ = true;
+  }
+  if (this->frame_stats_ && micros() - now > 150000)
+    ESP_LOGW(TAG, "slow frame %.0f ms: work %.0f (pre-render %d) timers %.0f publish %.0f | scene %d moving %d",
+             (micros() - now) / 1000.0f, work / 1000.0f, pre, timer_us / 1000.0f, publish_us / 1000.0f,
+             atmos_scene(), (int) atmos_is_moving());
+  this->finish_frame_();
+  this->busy_us_ += micros() - now;
+  // Next frame from this one's target pulse.
+  int32_t wait = (int32_t) (p->te_time_us() + (int32_t) (target - p->te_count()) * (int32_t) period - micros());
+  if (this->pending_)
+    wait = 1000;
   this->set_timeout("frame", wait > 0 ? (wait + 999) / 1000 : 0, [this]() { this->frame_(); });
 }
 
@@ -482,13 +631,13 @@ static void test_digit(uint8_t *f, int x, int y, int d) {
   static const uint8_t seg[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
   const int w = 48, h = 96, t = 10;
   uint8_t s = seg[d];
-  if (s & 0x01) test_fill(f, x, y, w, t);                  // a
-  if (s & 0x02) test_fill(f, x + w - t, y, t, h / 2);      // b
+  if (s & 0x01) test_fill(f, x, y, w, t);                      // a
+  if (s & 0x02) test_fill(f, x + w - t, y, t, h / 2);          // b
   if (s & 0x04) test_fill(f, x + w - t, y + h / 2, t, h / 2);  // c
-  if (s & 0x08) test_fill(f, x, y + h - t, w, t);          // d
-  if (s & 0x10) test_fill(f, x, y + h / 2, t, h / 2);      // e
-  if (s & 0x20) test_fill(f, x, y, t, h / 2);              // f
-  if (s & 0x40) test_fill(f, x, y + (h - t) / 2, w, t);    // g
+  if (s & 0x08) test_fill(f, x, y + h - t, w, t);              // d
+  if (s & 0x10) test_fill(f, x, y + h / 2, t, h / 2);          // e
+  if (s & 0x20) test_fill(f, x, y, t, h / 2);                  // f
+  if (s & 0x40) test_fill(f, x, y + (h - t) / 2, w, t);        // g
 }
 
 /* Inverts a rectangle, so the tear bar stays visible over the counter and box. */
@@ -520,62 +669,53 @@ void AtmosComponent::test_draw_() {
 void AtmosComponent::test_report_() {
   if (millis() - this->last_report_ms_ < this->report_ms_)
     return;
-  this->test_stats_.log("disp test", this->period_us_);
-  ESP_LOGI(TAG, "disp test  busy %.0f%% of CPU%s, TE pulses %u",
-           this->busy_us_ / 10.0f / (millis() - this->last_report_ms_), this->test_te_ ? " (excl. TE polling)" : "",
-           (unsigned) this->panel_->te_count());
+  this->test_stats_.log("disp test", this->expected_us_());
+  ESP_LOGI(TAG, "disp test  busy %.0f%% of CPU, TE period %.2f ms, every %u refresh(es)",
+           this->busy_us_ / 10.0f / (millis() - this->last_report_ms_), this->te_period_() / 1000.0f,
+           (unsigned) this->div_);
   this->last_report_ms_ = millis();
   this->test_stats_ = FrameStats();
   this->busy_us_ = 0;
 }
 
-/* TE pacing: the next frame is converted while the panel scans; at TE's rising edge
-   (start of the vertical blank) it is pushed at once. 15 KB at 40 MHz takes 3.6 ms,
-   faster than the panel scans, so the scan never overtakes the write. In the log,
-   "render" is the delay from the TE edge to the start of the push. */
-void AtmosComponent::loop() {
-  if (!this->test_te_)
-    return;
-  if (!this->test_ready_) {
-    uint32_t start = micros();
-    this->test_draw_();
-    this->test_ready_ = true;
-    this->test_te_seen_ = this->panel_->te_count();
-    this->busy_us_ += micros() - start;
-  }
-  uint32_t te = this->panel_->te_count();
-  if (te != this->test_te_seen_) {
-    uint32_t edge = this->panel_->te_time_us(), begin = micros();
-    this->panel_->push_buffer();
-    uint32_t pushed = micros();
-    uint32_t interval = this->last_present_ ? edge - this->last_present_ : this->period_us_;
-    this->last_present_ = edge;
-    this->test_stats_.add(interval, begin - edge, 0, pushed - begin, this->period_us_);
-    if (te - this->test_te_seen_ > 1)
-      ESP_LOGW(TAG, "disp test: missed %u TE pulse(s)", (unsigned) (te - this->test_te_seen_ - 1));
-    this->test_ready_ = false;
-    this->busy_us_ += pushed - begin;
-  }
-  this->test_report_();
-}
-
+/* Display test frames: with TE, one per div_ refreshes (frame_period rounded to whole
+   refreshes), sent by DMA at the pulse; without, at frame_period. In the log, "convert"
+   is the delay from the TE edge to the start of the push. */
 void AtmosComponent::test_frame_() {
+  auto *p = this->panel_;
   uint32_t now = micros();
-  if ((int32_t) (now - this->next_step_us_) >= 0) {
-    uint32_t late = now - this->next_step_us_;
-    this->next_step_us_ += (1 + late / this->period_us_) * this->period_us_;
-    uint32_t start = micros();
-    this->test_draw_();
-    uint32_t converted = micros();
-    this->panel_->push_buffer();
-    uint32_t pushed = micros();
-    uint32_t interval = this->last_present_ ? pushed - this->last_present_ : this->period_us_;
-    this->last_present_ = pushed;
-    this->test_stats_.add(interval, converted - start, 0, pushed - converted, this->period_us_);
-    this->busy_us_ += pushed - now;
+  uint32_t interval, lag, push;
+  bool late;
+  if (this->collect_push_(interval, lag, push, late))
+    this->test_stats_.add(interval, this->last_work_, lag, push, this->expected_us_());
+  if (p->busy()) {
+    this->set_timeout("frame", 1, [this]() { this->test_frame_(); });
+    return;
   }
+  int32_t wait;
+  if (this->te_frames_) {
+    uint32_t period = this->te_period_();
+    this->div_ = this->min_div_();
+    uint32_t tick = p->te_count(), target = this->last_target_ + this->div_;
+    if ((int32_t) (target - (tick + 1)) < 0)
+      target = tick + 1;
+    this->last_target_ = target;
+    this->test_draw_();
+    this->last_work_ = micros() - now;
+    p->present(target);
+    wait = (int32_t) (p->te_time_us() + (int32_t) (target - p->te_count()) * (int32_t) period - micros());
+  } else {
+    if ((int32_t) (now - this->next_step_us_) >= 0) {
+      uint32_t late_us = now - this->next_step_us_;
+      this->next_step_us_ += (1 + late_us / this->period_us_) * this->period_us_;
+      this->test_draw_();
+      this->last_work_ = micros() - now;
+      p->present(0);
+    }
+    wait = (int32_t) (this->next_step_us_ - micros());
+  }
+  this->busy_us_ += micros() - now;
   this->test_report_();
-  int32_t wait = (int32_t) (this->next_step_us_ - micros());
   this->set_timeout("frame", wait > 0 ? (wait + 999) / 1000 : 0, [this]() { this->test_frame_(); });
 }
 
@@ -585,10 +725,20 @@ void AtmosComponent::report_() {
            this->busy_us_ / 10.0f / std::max<uint32_t>(1, now_ms - this->report_start_ms_), 1e6f / this->period_us_);
   this->busy_us_ = 0;
   this->report_start_ms_ = now_ms;
-  this->window_still_.log("still", this->period_us_);
-  this->window_transition_.log("transition", this->period_us_);
-  this->still_.log("still tot", this->period_us_);
-  this->transition_.log("trans tot", this->period_us_);
+  uint32_t expected = this->expected_us_();
+  this->window_still_.log("still", expected);
+  this->window_transition_.log("transition", expected);
+  this->still_.log("still tot", expected);
+  this->transition_.log("trans tot", expected);
+  if (this->te_frames_) {
+    // With TE: "convert" in the lines above is the delay from the TE pulse to the push.
+    ESP_LOGI(TAG, "TE: refresh %.2f ms (%.1f Hz), every %u refresh(es) now, late pushes %u, push avg %.0f bytes",
+             this->te_period_() / 1000.0f, 1e6f / this->te_period_(), (unsigned) this->div_,
+             (unsigned) this->late_pushes_, this->push_n_ ? (float) this->push_bytes_sum_ / this->push_n_ : 0.0f);
+    this->late_pushes_ = 0;
+    this->push_bytes_sum_ = 0;
+    this->push_n_ = 0;
+  }
   ESP_LOGI(TAG, "pre-rendered transitions %u, compose avg %.1f ms, clip overruns %u %s",
            (unsigned) atmos_prerendered_transitions(), atmos_compose_ms(), (unsigned) atmos_clip_overruns(),
            atmos_overrun_detail());

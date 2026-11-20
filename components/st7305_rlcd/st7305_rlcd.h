@@ -20,6 +20,9 @@
 #include "esphome/core/hal.h"
 #include "esphome/components/spi/spi.h"
 #include "esphome/components/display/display_buffer.h"
+#include <driver/spi_master.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace esphome {
 namespace st7305_rlcd {
@@ -57,6 +60,10 @@ class ST7305RLCD : public display::DisplayBuffer,
   /// TE rising edges since setup, and the micros() of the latest.
   uint32_t te_count() const { return this->te_count_; }
   uint32_t te_time_us() const { return this->te_time_us_; }
+  /// Measured refresh period (TE pulse interval, averaged), 0 until known.
+  uint32_t te_period_us() const { return this->te_period_q4_ / 16; }
+  /// Push only the changed window (default); false sends the whole frame every time.
+  void set_partial_updates(bool on) { this->partial_ = on; }
   void set_model(ST7305Model model) { this->model_ = model; }
   void set_width(uint16_t width) { this->width_ = width; }
   void set_height(uint16_t height) { this->height_ = height; }
@@ -79,12 +86,29 @@ class ST7305RLCD : public display::DisplayBuffer,
 
   display::DisplayType get_display_type() override { return display::DisplayType::DISPLAY_TYPE_BINARY; }
 
-  /// Native 1-bit path (Atmos): convert rows y1..y2 of a row-major 1-bit frame
-  /// (50-byte MSB-first rows for 400 px, bit set = white) into the panel layout.
+  /// Native 1-bit path (Atmos): convert rows y1..y2, columns x1..x2 (rounded out to
+  /// whole bytes) of a row-major 1-bit frame (50-byte MSB-first rows for 400 px, bit
+  /// set = white) into the panel layout, growing the window the next push sends.
   /// Returns false if the model/orientation is not the 400x300 landscape panel.
-  bool load_rows_i1(const uint8_t *frame, int y1, int y2);
-  /// Send the whole panel buffer over SPI.
-  void push_buffer() { this->write_display_(); }
+  bool load_rows_i1(const uint8_t *frame, int y1, int y2, int x1 = 0, int x2 = 399);
+  /// Queue the changed window for sending: by DMA at the first TE pulse at or after
+  /// target_te (te_count() numbering), or at once without a TE pin. Returns false
+  /// while the previous push is still waiting or sending (try again later); the
+  /// panel buffer may be written again as soon as this returns true.
+  bool present(uint32_t target_te);
+  /// True while a presented frame waits for its TE pulse or is being sent.
+  bool busy() const { return this->busy_; }
+  /// Last push: TE pulse it went out at, micros() of that pulse, its SPI time and bytes.
+  uint32_t last_push_te() const { return this->push_te_; }
+  uint32_t last_push_target() const { return this->push_target_; }
+  uint32_t last_push_edge_us() const { return this->push_edge_us_; }
+  uint32_t last_push_start_us() const { return this->push_start_us_; }
+  uint32_t last_push_us() const { return this->push_us_; }
+  uint32_t last_push_bytes() const { return this->push_bytes_; }
+  uint32_t pushes() const { return this->pushes_; }
+  /// Send the whole panel buffer now and wait for it (splash, tests).
+  void push_now();
+  void push_buffer() { this->push_now(); }
 
   /// Bulk RGB565 path used by LVGL's flush (Atmos modification). Converts each pixel by
   /// luminance (above half = white) and writes the panel's 2x4 block layout directly.
@@ -111,6 +135,29 @@ class ST7305RLCD : public display::DisplayBuffer,
   void write_ram_();
   void send_command_(uint8_t cmd);
   void send_data_(uint8_t data);
+
+  struct Window {
+    uint8_t r1, r2;  // panel rows (pairs of screen columns), inclusive
+    uint8_t u1, u2;  // column units (3 bytes = 12 screen rows), inclusive
+  };
+  bool setup_spi_();
+  void start_push_task_();
+  static void push_task_(void *arg);
+  void transmit_(const uint8_t *data, size_t len, bool dc);
+  void send_window_(const Window &w);
+  void pack_window_(const Window &w);
+  void mark_dirty_(int y1, int y2, int x1, int x2);
+
+  spi_device_handle_t spi_{nullptr};
+  uint8_t *tx_buf_{nullptr};
+  TaskHandle_t push_task_handle_{nullptr};
+  Window win_{}, tx_win_{};
+  bool dirty_{false};
+  bool partial_{true};
+  volatile bool busy_{false}, armed_{false};
+  volatile uint32_t target_te_{0}, push_te_{0}, push_target_{0}, push_edge_us_{0}, push_start_us_{0};
+  volatile uint32_t push_us_{0}, push_bytes_{0}, pushes_{0};
+  volatile int32_t te_period_q4_{0};
 
   GPIOPin *dc_pin_{nullptr};
   GPIOPin *reset_pin_{nullptr};

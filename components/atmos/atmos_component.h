@@ -53,7 +53,6 @@ class AtmosComponent : public Component {
   // switch entities (PROCESSOR - 1) apply their settings to it later.
   float get_setup_priority() const override { return setup_priority::HARDWARE - 0.5f; }
   void setup() override;
-  void loop() override;
   void dump_config() override;
   void advance(int direction);
 
@@ -94,12 +93,27 @@ class AtmosComponent : public Component {
   void wait_ready_();
   bool ready_() const;
   void report_();
+  // TE-paced frames (the panel's te_pin): see frame_te_().
+  void frame_te_();
+  void service_(uint32_t &timer_us, uint32_t &publish_us);
+  void finish_frame_();
+  uint32_t te_period_() const;
+  uint32_t min_div_() const;
+  uint32_t expected_us_() const;
+  bool collect_push_(uint32_t &interval, uint32_t &lag, uint32_t &push, bool &late);
+  bool te_frames_{false};
+  bool pending_{false};        // drawn, waiting for the previous push to finish
+  bool pushed_moving_{false};  // the frame last presented was a transition frame
+  uint32_t last_target_{0};    // TE pulse the latest frame is shown from
+  uint32_t div_{2};            // refreshes per frame
+  int rate_key_{-1};           // scene * 2 + moving, when div_ was chosen
+  uint32_t cost_ema_[12]{};    // average frame work (us) per scene, still / moving
+  uint32_t last_work_{0};
+  uint32_t seen_pushes_{0}, last_push_te_{0}, late_pushes_{0};
+  uint64_t push_bytes_sum_{0};
+  uint32_t push_n_{0};
   void test_frame_();
   bool display_test_{false};
-  bool test_te_{false};     // display test paced by the panel's TE signal
-  bool test_ready_{false};  // next frame converted, waiting for TE
-  uint32_t test_te_seen_{0};
-  HighFrequencyLoopRequester test_hfl_;
   void test_draw_();
   void test_report_();
   uint32_t test_count_{0};

@@ -9,7 +9,8 @@
  *
  * @version 2.0.0
  *
- * Modified for the Atmos project (2026-10-18): native 1-bit load_rows_i1()/push_buffer(),
+ * Modified for the Atmos project (2026-10-18): native 1-bit load_rows_i1()/present(), pushes
+ * by DMA from a push task, timed to the TE signal and limited to the changed window (2026-11-20),
  * bulk RGB565 draw_pixels_at() for LVGL,
  * display buffer in internal RAM, and a start-up check of the bulk layout against the
  * pixel LUTs. Original: https://github.com/kylehase/ESPHome-ST7305-RLCD (Apache-2.0).
@@ -19,6 +20,8 @@
 #include "esphome/core/log.h"
 #include "esphome/core/helpers.h"
 #include <vector>
+#include <cstring>
+#include <esp_heap_caps.h>
 
 namespace esphome {
 namespace st7305_rlcd {
@@ -47,8 +50,12 @@ void ST7305RLCD::setup() {
     this->te_pin_->attach_interrupt(&ST7305RLCD::te_isr_, this, gpio::INTERRUPT_RISING_EDGE);
   }
 
-  // Initialize SPI
-  this->spi_setup();
+  // SPI: the driver's own device on the bus ESPHome's spi: component initialised (with
+  // DMA), so pushes can be queued and run while the CPU renders.
+  if (!this->setup_spi_()) {
+    this->mark_failed();
+    return;
+  }
 
   // Allocate display buffer in internal RAM: the bulk flush writes it randomly every frame.
   RAMAllocator<uint8_t> buffer_allocator(RAMAllocator<uint8_t>::ALLOC_INTERNAL);
@@ -75,13 +82,9 @@ void ST7305RLCD::setup() {
   // Hardware initialization
   this->hardware_reset_();
   this->init_display_();
+  this->start_push_task_();
 
   ESP_LOGCONFIG(TAG, "ST7305 RLCD setup complete");
-}
-
-void IRAM_ATTR ST7305RLCD::te_isr_(ST7305RLCD *self) {
-  self->te_time_us_ = micros();
-  self->te_count_ = self->te_count_ + 1;
 }
 
 void ST7305RLCD::apply_model_settings_() {
@@ -190,20 +193,25 @@ bool ST7305RLCD::verify_landscape_layout_() {
 // Each panel byte holds a 2-column x 4-row block: bits 7..0 = (row r, col c) for
 // r = 0..3, c = 0..1, where row r is screen row H-1-(4*block+r). A source byte of a
 // row holds 8 columns, i.e. the 2-bit pairs for 4 consecutive panel bytes.
-bool HOT ST7305RLCD::load_rows_i1(const uint8_t *frame, int y1, int y2) {
+bool HOT ST7305RLCD::load_rows_i1(const uint8_t *frame, int y1, int y2, int x1, int x2) {
   if (this->buffer_ == nullptr || this->orientation_ != ST7305_ORIENTATION_LANDSCAPE || this->width_ != 400 ||
       this->height_ % 4 != 0)
     return false;
   const int h = this->height_, h4 = h >> 2, row_bytes = this->width_ / 8;
   y1 = std::max(y1, 0);
   y2 = std::min(y2, h - 1);
+  // Whole source bytes (8 columns) covering x1..x2.
+  const int sx1 = std::max(x1, 0) >> 3, sx2 = std::min(x2, (int) this->width_ - 1) >> 3;
+  if (y1 > y2 || sx1 > sx2)
+    return true;
+  this->mark_dirty_(y1, y2, sx1 * 8, sx2 * 8 + 7);
   // Blocks covering the rows (screen rows run bottom-up through the blocks).
   const int b_first = (h - 1 - y2) >> 2, b_last = (h - 1 - y1) >> 2;
   for (int b = b_first; b <= b_last; b++) {
     const uint8_t *r0 = frame + (h - 1 - 4 * b) * row_bytes;
     const uint8_t *r1 = r0 - row_bytes, *r2 = r1 - row_bytes, *r3 = r2 - row_bytes;
     uint8_t *dest = this->buffer_ + b;
-    for (int sx = 0; sx < row_bytes; sx++) {
+    for (int sx = sx1; sx <= sx2; sx++) {
       const uint8_t a = r0[sx], c1 = r1[sx], c2 = r2[sx], c3 = r3[sx];
       for (int p = 0; p < 4; p++) {
         const int shift = 6 - 2 * p;
@@ -225,7 +233,7 @@ bool ST7305RLCD::verify_i1_path_() {
     seed = seed * 1664525u + 1013904223u;
     v = seed >> 24;
   }
-  if (!this->load_rows_i1(frame.data(), 0, this->height_ - 1))
+  if (!this->load_rows_i1(frame.data(), 0, this->height_ - 1, 0, this->width_ - 1))
     return false;
   bool ok = true;
   for (int y = 0; y < this->height_ && ok; y++) {
@@ -240,6 +248,7 @@ bool ST7305RLCD::verify_i1_path_() {
     }
   }
   memset(this->buffer_, 0xFF, this->buffer_size_);
+  this->dirty_ = false;
   if (ok)
     ESP_LOGI(TAG, "1-bit row conversion matches the pixel LUTs for all pixels");
   return ok;
@@ -568,56 +577,206 @@ void ST7305RLCD::init_lut_portrait_() {
 }
 
 // =============================================================================
-// Display Write
+// Display Write (Atmos: own DMA device, push task, TE-timed windowed pushes)
 // =============================================================================
+//
+// The panel's memory is addressed as 200 rows (2Bh, one per pair of screen columns,
+// left to right: the panel refreshes in this order) of 25 column units (2Ah, 3 bytes =
+// 12 screen rows each). load_rows_i1() converts into buffer_ and grows the dirty window;
+// present() packs the window into tx_buf_ (DMA-capable) and arms the push task, which
+// sends it at the next TE rising edge (start of the vertical blank) at or after the
+// target pulse, or at once without a TE pin. A 15 KB push at 40 MHz takes 3.6 ms, less
+// than an eighth of a refresh, so the scan never overtakes the write: no tearing.
+
+static const size_t CHUNK = 4092;  // the bus's max_transfer_sz (ESPHome's SPI component)
+
+bool ST7305RLCD::setup_spi_() {
+  this->cs_->setup();
+  this->cs_->digital_write(true);
+  spi_device_interface_config_t config = {};
+  config.mode = 0;
+  config.clock_speed_hz = (int) this->data_rate_;
+  config.spics_io_num = -1;  // CS is held low by hand across a whole push
+  config.queue_size = 8;
+  config.flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY;
+  esp_err_t err = spi_bus_add_device(this->parent_->get_interface(), &config, &this->spi_);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "spi_bus_add_device failed: %d", err);
+    return false;
+  }
+  this->tx_buf_ = (uint8_t *) heap_caps_malloc(this->buffer_size_, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+  if (this->tx_buf_ == nullptr) {
+    ESP_LOGE(TAG, "Failed to allocate the DMA buffer");
+    return false;
+  }
+  return true;
+}
+
+void ST7305RLCD::start_push_task_() {
+  xTaskCreatePinnedToCore(&ST7305RLCD::push_task_, "st7305_push", 3072, this, 5, &this->push_task_handle_,
+                          tskNO_AFFINITY);
+}
+
+void IRAM_ATTR ST7305RLCD::te_isr_(ST7305RLCD *self) {
+  uint32_t now = micros();
+  uint32_t dt = now - self->te_time_us_;
+  if (self->te_count_ > 1 && dt > 5000 && dt < 200000)
+    self->te_period_q4_ += (int32_t) (dt * 16 - self->te_period_q4_) / 16;  // EMA, 1/16
+  else if (self->te_count_ == 1 && dt > 5000 && dt < 200000)
+    self->te_period_q4_ = dt * 16;
+  self->te_time_us_ = now;
+  self->te_count_ = self->te_count_ + 1;
+  if (self->armed_ && (int32_t) (self->te_count_ - self->target_te_) >= 0) {
+    self->armed_ = false;
+    self->push_edge_us_ = now;
+    self->push_te_ = self->te_count_;
+    self->push_target_ = self->target_te_;
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(self->push_task_handle_, &woken);
+    portYIELD_FROM_ISR(woken);
+  }
+}
+
+void ST7305RLCD::push_task_(void *arg) {
+  auto *self = static_cast<ST7305RLCD *>(arg);
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    uint32_t start = micros();
+    self->send_window_(self->tx_win_);
+    self->push_start_us_ = start;
+    self->push_us_ = micros() - start;
+    self->pushes_ = self->pushes_ + 1;
+    self->busy_ = false;
+  }
+}
+
+void ST7305RLCD::transmit_(const uint8_t *data, size_t len, bool dc) {
+  this->dc_pin_->digital_write(dc);
+  spi_transaction_t t = {};
+  t.length = len * 8;
+  if (len <= 4) {
+    t.flags = SPI_TRANS_USE_TXDATA;
+    memcpy(t.tx_data, data, len);
+  } else {
+    t.tx_buffer = data;
+  }
+  spi_device_polling_transmit(this->spi_, &t);
+}
+
+/* One push: address window, Memory Write, then the packed data as queued DMA
+   transactions (interrupt driven: the calling task sleeps while they run). */
+void ST7305RLCD::send_window_(const Window &w) {
+  const uint8_t ca[2] = {(uint8_t) (this->col_start_ + w.u1), (uint8_t) (this->col_start_ + w.u2)};
+  const uint8_t ra[2] = {(uint8_t) (this->row_start_ + w.r1), (uint8_t) (this->row_start_ + w.r2)};
+  const uint8_t c2a = 0x2A, c2b = 0x2B, c2c = 0x2C;
+  this->cs_->digital_write(false);
+  this->transmit_(&c2a, 1, false);
+  this->transmit_(ca, 2, true);
+  this->transmit_(&c2b, 1, false);
+  this->transmit_(ra, 2, true);
+  this->transmit_(&c2c, 1, false);
+  this->dc_pin_->digital_write(true);
+  size_t len = (size_t) (w.r2 - w.r1 + 1) * (w.u2 - w.u1 + 1) * 3;
+  static spi_transaction_t trans[8];
+  int n = 0;
+  for (size_t off = 0; off < len && n < 8; off += CHUNK, n++) {
+    trans[n] = {};
+    trans[n].length = std::min(CHUNK, len - off) * 8;
+    trans[n].tx_buffer = this->tx_buf_ + off;
+    spi_device_queue_trans(this->spi_, &trans[n], portMAX_DELAY);
+  }
+  spi_transaction_t *done;
+  for (int i = 0; i < n; i++)
+    spi_device_get_trans_result(this->spi_, &done, portMAX_DELAY);
+  this->cs_->digital_write(true);
+  this->push_bytes_ = len;
+}
+
+/* Packs the window of buffer_ into tx_buf_, row by row. */
+void ST7305RLCD::pack_window_(const Window &w) {
+  const int row_bytes = this->height_ >> 2;  // 75
+  const int n = (w.u2 - w.u1 + 1) * 3;
+  uint8_t *dst = this->tx_buf_;
+  for (int r = w.r1; r <= w.r2; r++, dst += n)
+    memcpy(dst, this->buffer_ + r * row_bytes + w.u1 * 3, n);
+}
+
+void ST7305RLCD::mark_dirty_(int y1, int y2, int x1, int x2) {
+  const int h = this->height_;
+  // Screen rows run bottom-up through the 4-row blocks; 3 blocks per column unit.
+  int u1 = ((h - 1 - y2) >> 2) / 3, u2 = ((h - 1 - y1) >> 2) / 3;
+  int r1 = x1 >> 1, r2 = x2 >> 1;
+  if (!this->partial_) {
+    u1 = 0, u2 = (h >> 2) / 3 - 1, r1 = 0, r2 = (this->width_ >> 1) - 1;
+  }
+  if (!this->dirty_) {
+    this->win_ = {(uint8_t) r1, (uint8_t) r2, (uint8_t) u1, (uint8_t) u2};
+    this->dirty_ = true;
+    return;
+  }
+  this->win_.r1 = std::min<int>(this->win_.r1, r1);
+  this->win_.r2 = std::max<int>(this->win_.r2, r2);
+  this->win_.u1 = std::min<int>(this->win_.u1, u1);
+  this->win_.u2 = std::max<int>(this->win_.u2, u2);
+}
+
+bool ST7305RLCD::present(uint32_t target_te) {
+  if (this->busy_)
+    return false;
+  if (!this->dirty_)
+    return true;  // nothing changed
+  this->pack_window_(this->win_);
+  this->tx_win_ = this->win_;
+  this->dirty_ = false;
+  this->busy_ = true;
+  if (this->te_pin_ == nullptr || this->push_task_handle_ == nullptr) {
+    this->push_edge_us_ = micros();
+    this->push_te_ = this->push_target_ = this->te_count_;
+    if (this->push_task_handle_ != nullptr) {
+      xTaskNotifyGive(this->push_task_handle_);
+    } else {
+      this->send_window_(this->tx_win_);
+      this->busy_ = false;
+    }
+    return true;
+  }
+  this->target_te_ = target_te;
+  this->armed_ = true;  // the ISR starts the push at the target TE pulse or later
+  return true;
+}
+
+void ST7305RLCD::push_now() {
+  while (this->busy_)
+    delay(1);
+  this->win_ = {0, (uint8_t) ((this->width_ >> 1) - 1), 0, (uint8_t) ((this->height_ >> 2) / 3 - 1)};
+  this->pack_window_(this->win_);
+  this->tx_win_ = this->win_;
+  this->dirty_ = false;
+  this->send_window_(this->tx_win_);
+}
 
 void ST7305RLCD::write_display_() {
   if (this->buffer_ == nullptr)
     return;
-
-  // Ensure display is awake
-  this->send_command_(0x38);  // High Power Mode
-  this->send_command_(0x29);  // Display On
-  this->write_ram_();
+  this->push_now();
 }
 
-void ST7305RLCD::write_ram_() {
-  // Set column address window
-  this->send_command_(0x2A);
-  this->send_data_(this->col_start_);
-  this->send_data_(this->col_end_);
-
-  // Set row address window
-  this->send_command_(0x2B);
-  this->send_data_(this->row_start_);
-  this->send_data_(this->row_end_);
-
-  // Memory Write - CS must stay LOW for command + all data bytes
-  this->dc_pin_->digital_write(false);  // Command mode
-  this->enable();                        // CS LOW
-  this->write_byte(0x2C);               // Memory Write command
-
-  this->dc_pin_->digital_write(true);   // Data mode (CS still LOW)
-  this->write_array(this->buffer_, this->buffer_size_);
-  this->disable();                       // CS HIGH
-}
+void ST7305RLCD::write_ram_() { this->push_now(); }
 
 // =============================================================================
-// SPI Helpers
+// SPI Helpers (setup and power control only; never during a push)
 // =============================================================================
 
 void ST7305RLCD::send_command_(uint8_t cmd) {
-  this->dc_pin_->digital_write(false);
-  this->enable();
-  this->write_byte(cmd);
-  this->disable();
+  this->cs_->digital_write(false);
+  this->transmit_(&cmd, 1, false);
+  this->cs_->digital_write(true);
 }
 
 void ST7305RLCD::send_data_(uint8_t data) {
-  this->dc_pin_->digital_write(true);
-  this->enable();
-  this->write_byte(data);
-  this->disable();
+  this->cs_->digital_write(false);
+  this->transmit_(&data, 1, true);
+  this->cs_->digital_write(true);
 }
 
 // =============================================================================
