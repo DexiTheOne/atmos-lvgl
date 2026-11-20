@@ -2151,30 +2151,37 @@ static void compose_ribbons(int32_t progress){
     const int32_t gap=UI_GAS_RIBBON_GAP<<8,full=(UI_GAS_RIBBON_GAP/2+2)<<8,rim=2<<8;
     const int reach=UI_GAS_WAVE_AMPLITUDE+4+UI_GAS_RIBBON_GAP;
     int lo=floor_div(-(reach<<8)-ribbon_top,gap),hi=floor_div(((UI_HEIGHT+reach)<<8)-ribbon_top,gap)+1;
-    static int32_t half[64][RIBBON_BUCKETS];
+    /* half[bucket][lane-lo]; lanes outside lo..hi stay 0 (absent). */
+    static int32_t half[RIBBON_BUCKETS][66];
     if(hi-lo>=64)hi=lo+63;
+    memset(half,0,sizeof half);
     for(int k=lo;k<=hi;k++)for(int b=0;b<RIBBON_BUCKETS;b++){
         int32_t delay=ribbon_lane_delay*LV_MIN(LV_ABS(k-1),5)/5+b*ribbon_column_step;
-        half[k-lo][b]=(int32_t)(((int64_t)full*fx_window(progress,delay,FX*55/100))>>16);
+        half[b][k-lo+1]=(int32_t)(((int64_t)full*fx_window(progress,delay,FX*55/100))>>16);
     }
-    /* rel grows by one row (256) per y, so each column's nearest lane k0 is tracked
-       with its next threshold instead of a division per pixel. */
-    static int32_t col_rel[UI_WIDTH],col_next[UI_WIDTH];static int16_t col_k0[UI_WIDTH];
+    /* Each pixel's offset from its nearest lane k0 grows by one row (256) per y, so it
+       is tracked per column instead of divided out. A lane's half-width plus rim never
+       reaches a gap, so only k0 and the neighbour on the pixel's side can cover it:
+       inside any lane is CODE_IN, else within a rim CODE_INK, else CODE_OUT. */
+    static int32_t col_base[UI_WIDTH];static int16_t col_k0[UI_WIDTH];
     for(int x=0;x<UI_WIDTH;x++){
-        col_rel[x]=-ribbon_top-ribbon_wave[x];
-        int k=floor_div(col_rel[x]+gap/2,gap);
-        col_k0[x]=(int16_t)k;col_next[x]=(k+1)*gap-gap/2;
+        int32_t rel=-ribbon_top-ribbon_wave[x];
+        int k=floor_div(rel+gap/2,gap);
+        col_k0[x]=(int16_t)k;col_base[x]=rel-k*gap; /* in [-gap/2, gap/2) */
     }
     for(int y=0;y<UI_HEIGHT;y++){
         for(int x=0;x<UI_WIDTH;x++){
-            int32_t rel=col_rel[x];col_rel[x]+=256;
-            while(rel>=col_next[x]){col_k0[x]++;col_next[x]+=gap;}
-            int k0=col_k0[x];uint8_t code=CODE_OUT;
-            for(int k=LV_MAX(k0-1,lo);k<=LV_MIN(k0+1,hi);k++){
-                int32_t h=half[k-lo][ribbon_bucket[x]],d=LV_ABS(rel-k*gap);
-                if(h<=0)continue;
-                if(d<h){code=CODE_IN;break;}
-                if(d<h+rim)code=CODE_INK;
+            int32_t base=col_base[x];int k0=col_k0[x];
+            if(base+256>=gap/2){col_base[x]=base+256-gap;col_k0[x]++;}else col_base[x]=base+256;
+            const int32_t *h=half[ribbon_bucket[x]]+1-lo; /* h[k], 0 outside lo..hi */
+            int32_t h0=k0>=lo-1 && k0<=hi+1?h[k0]:0,d0=LV_ABS(base);
+            uint8_t code=CODE_OUT;
+            if(h0>0 && d0<h0)code=CODE_IN;
+            else{
+                if(h0>0 && d0<h0+rim)code=CODE_INK;
+                int kn=base>=0?k0+1:k0-1;
+                int32_t hn=kn>=lo-1 && kn<=hi+1?h[kn]:0,dn=gap-d0;
+                if(hn>0){if(dn<hn)code=CODE_IN;else if(dn<hn+rim)code=CODE_INK;}
             }
             row_code[x]=code;
         }
