@@ -53,8 +53,16 @@ void FrameStats::log(const char *name, uint32_t period) const {
 
 void AtmosComponent::setup() {
   if (this->display_test_) {
-    ESP_LOGW(TAG, "Display test: UI disabled, target period %u us", (unsigned) this->period_us_);
+    this->test_te_ = this->panel_->has_te();
+    if (this->test_te_)
+      ESP_LOGW(TAG, "Display test: UI disabled, one frame per panel TE pulse");
+    else
+      ESP_LOGW(TAG, "Display test: UI disabled, target period %u us", (unsigned) this->period_us_);
     this->last_report_ms_ = millis();
+    if (this->test_te_) {
+      this->test_hfl_.start();  // poll TE on every loop pass
+      return;
+    }
     this->next_step_us_ = micros();
     this->set_timeout("frame", 0, [this]() { this->test_frame_(); });
     return;
@@ -490,39 +498,83 @@ static void test_invert(uint8_t *f, int x0, int y0, int w, int h) {
       f[y * 50 + x / 8] ^= 0x80 >> (x & 7);
 }
 
-void AtmosComponent::test_frame_() {
+/* Draws the next frame and converts it into the panel buffer. The whole page inverts
+   for 8 frames out of every 16, so a frame torn mid-scan shows half black, half white. */
+void AtmosComponent::test_draw_() {
   uint8_t *f = frame_buf + 8;
+  memset(f, 0xFF, 400 / 8 * 300);
+  uint32_t count = ++this->test_count_;
+  uint32_t n = count;
+  for (int i = 0; i < 6; i++, n /= 10)
+    test_digit(f, 26 + (5 - i) * 60, 30, n % 10);
+  // The box steps one slot per count: its slot is the counter's last digit.
+  test_fill(f, 20 + (int) ((count - 1) % 10) * 36, 200, 36, 40);
+  // Tearing: a full-height bar sweeps 16 px per frame; a frame caught mid-scan
+  // shows it stepped sideways at the scan row.
+  test_invert(f, (int) ((count - 1) * 16 % 400), 0, 24, 300);
+  if ((count / 8) % 2)
+    test_invert(f, 0, 0, 400, 300);  // full-page refresh
+  this->panel_->load_rows_i1(f, 0, 299);
+}
+
+void AtmosComponent::test_report_() {
+  if (millis() - this->last_report_ms_ < this->report_ms_)
+    return;
+  this->test_stats_.log("disp test", this->period_us_);
+  ESP_LOGI(TAG, "disp test  busy %.0f%% of CPU%s, TE pulses %u",
+           this->busy_us_ / 10.0f / (millis() - this->last_report_ms_), this->test_te_ ? " (excl. TE polling)" : "",
+           (unsigned) this->panel_->te_count());
+  this->last_report_ms_ = millis();
+  this->test_stats_ = FrameStats();
+  this->busy_us_ = 0;
+}
+
+/* TE pacing: the next frame is converted while the panel scans; at TE's rising edge
+   (start of the vertical blank) it is pushed at once. 15 KB at 40 MHz takes 3.6 ms,
+   faster than the panel scans, so the scan never overtakes the write. In the log,
+   "render" is the delay from the TE edge to the start of the push. */
+void AtmosComponent::loop() {
+  if (!this->test_te_)
+    return;
+  if (!this->test_ready_) {
+    uint32_t start = micros();
+    this->test_draw_();
+    this->test_ready_ = true;
+    this->test_te_seen_ = this->panel_->te_count();
+    this->busy_us_ += micros() - start;
+  }
+  uint32_t te = this->panel_->te_count();
+  if (te != this->test_te_seen_) {
+    uint32_t edge = this->panel_->te_time_us(), begin = micros();
+    this->panel_->push_buffer();
+    uint32_t pushed = micros();
+    uint32_t interval = this->last_present_ ? edge - this->last_present_ : this->period_us_;
+    this->last_present_ = edge;
+    this->test_stats_.add(interval, begin - edge, 0, pushed - begin, this->period_us_);
+    if (te - this->test_te_seen_ > 1)
+      ESP_LOGW(TAG, "disp test: missed %u TE pulse(s)", (unsigned) (te - this->test_te_seen_ - 1));
+    this->test_ready_ = false;
+    this->busy_us_ += pushed - begin;
+  }
+  this->test_report_();
+}
+
+void AtmosComponent::test_frame_() {
   uint32_t now = micros();
   if ((int32_t) (now - this->next_step_us_) >= 0) {
     uint32_t late = now - this->next_step_us_;
     this->next_step_us_ += (1 + late / this->period_us_) * this->period_us_;
     uint32_t start = micros();
-    memset(f, 0xFF, 400 / 8 * 300);
-    uint32_t n = this->test_count_++;
-    for (int i = 0; i < 6; i++, n /= 10)
-      test_digit(f, 26 + (5 - i) * 60, 30, n % 10);
-    // The box steps one slot per count: its slot is the counter's last digit.
-    test_fill(f, 20 + (int) ((this->test_count_ - 1) % 10) * 36, 200, 36, 40);
-    // Tearing: a full-height bar sweeps 16 px per frame; a frame caught mid-scan
-    // shows it stepped sideways at the scan row.
-    test_invert(f, (int) ((this->test_count_ - 1) * 16 % 400), 0, 24, 300);
-    uint32_t drawn = micros();
-    this->panel_->load_rows_i1(f, 0, 299);
+    this->test_draw_();
     uint32_t converted = micros();
     this->panel_->push_buffer();
     uint32_t pushed = micros();
     uint32_t interval = this->last_present_ ? pushed - this->last_present_ : this->period_us_;
     this->last_present_ = pushed;
-    this->test_stats_.add(interval, drawn - start, converted - drawn, pushed - converted, this->period_us_);
+    this->test_stats_.add(interval, converted - start, 0, pushed - converted, this->period_us_);
     this->busy_us_ += pushed - now;
   }
-  if (millis() - this->last_report_ms_ >= this->report_ms_) {
-    this->test_stats_.log("disp test", this->period_us_);
-    ESP_LOGI(TAG, "disp test  busy %.0f%% of CPU", this->busy_us_ / 10.0f / (millis() - this->last_report_ms_));
-    this->last_report_ms_ = millis();
-    this->test_stats_ = FrameStats();
-    this->busy_us_ = 0;
-  }
+  this->test_report_();
   int32_t wait = (int32_t) (this->next_step_us_ - micros());
   this->set_timeout("frame", wait > 0 ? (wait + 999) / 1000 : 0, [this]() { this->test_frame_(); });
 }

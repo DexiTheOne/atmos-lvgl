@@ -42,6 +42,10 @@ void ST7305RLCD::setup() {
   if (this->reset_pin_ != nullptr) {
     this->reset_pin_->setup();
   }
+  if (this->te_pin_ != nullptr) {
+    this->te_pin_->setup();
+    this->te_pin_->attach_interrupt(&ST7305RLCD::te_isr_, this, gpio::INTERRUPT_RISING_EDGE);
+  }
 
   // Initialize SPI
   this->spi_setup();
@@ -73,6 +77,11 @@ void ST7305RLCD::setup() {
   this->init_display_();
 
   ESP_LOGCONFIG(TAG, "ST7305 RLCD setup complete");
+}
+
+void IRAM_ATTR ST7305RLCD::te_isr_(ST7305RLCD *self) {
+  self->te_time_us_ = micros();
+  self->te_count_ = self->te_count_ + 1;
 }
 
 void ST7305RLCD::apply_model_settings_() {

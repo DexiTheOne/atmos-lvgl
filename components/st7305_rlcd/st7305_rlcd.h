@@ -51,6 +51,12 @@ class ST7305RLCD : public display::DisplayBuffer,
   // Configuration setters (called from Python codegen)
   void set_dc_pin(GPIOPin *pin) { this->dc_pin_ = pin; }
   void set_reset_pin(GPIOPin *pin) { this->reset_pin_ = pin; }
+  /// Tearing-effect output (TE): rises at the start of each vertical blank.
+  void set_te_pin(InternalGPIOPin *pin) { this->te_pin_ = pin; }
+  bool has_te() const { return this->te_pin_ != nullptr; }
+  /// TE rising edges since setup, and the micros() of the latest.
+  uint32_t te_count() const { return this->te_count_; }
+  uint32_t te_time_us() const { return this->te_time_us_; }
   void set_model(ST7305Model model) { this->model_ = model; }
   void set_width(uint16_t width) { this->width_ = width; }
   void set_height(uint16_t height) { this->height_ = height; }
@@ -108,6 +114,10 @@ class ST7305RLCD : public display::DisplayBuffer,
 
   GPIOPin *dc_pin_{nullptr};
   GPIOPin *reset_pin_{nullptr};
+  InternalGPIOPin *te_pin_{nullptr};
+  volatile uint32_t te_count_{0};
+  volatile uint32_t te_time_us_{0};
+  static void te_isr_(ST7305RLCD *self);
 
   ST7305Model model_{ST7305_MODEL_WAVESHARE_400X300};
   ST7305Orientation orientation_{ST7305_ORIENTATION_LANDSCAPE};

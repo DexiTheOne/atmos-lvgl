@@ -21,6 +21,7 @@ AUTO_LOAD = ["display"]
 
 CONF_ORIENTATION = "orientation"
 CONF_REFRESH_RATE = "refresh_rate"
+CONF_TE_PIN = "te_pin"
 REFRESH_RATES = {"16Hz": 32, "25.5Hz": 51, "32Hz": 64, "51Hz": 102}
 
 st7305_rlcd_ns = cg.esphome_ns.namespace("st7305_rlcd")
@@ -64,6 +65,8 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(): cv.declare_id(ST7305RLCD),
             cv.Required(CONF_DC_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_RESET_PIN): pins.gpio_output_pin_schema,
+            # Tearing-effect output: frames can be sent at the start of the panel's blank.
+            cv.Optional(CONF_TE_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_MODEL, default="WAVESHARE_400X300"): cv.enum(
                 MODELS, upper=True, space="_"
             ),
@@ -94,6 +97,9 @@ async def to_code(config):
     if reset_config := config.get(CONF_RESET_PIN):
         reset_pin = await cg.gpio_pin_expression(reset_config)
         cg.add(var.set_reset_pin(reset_pin))
+
+    if te_config := config.get(CONF_TE_PIN):
+        cg.add(var.set_te_pin(await cg.gpio_pin_expression(te_config)))
 
     cg.add(var.set_model(config[CONF_MODEL]))
     cg.add(var.set_refresh_hz_x2(REFRESH_RATES[config[CONF_REFRESH_RATE]]))

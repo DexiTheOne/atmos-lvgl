@@ -53,6 +53,7 @@ class AtmosComponent : public Component {
   // switch entities (PROCESSOR - 1) apply their settings to it later.
   float get_setup_priority() const override { return setup_priority::HARDWARE - 0.5f; }
   void setup() override;
+  void loop() override;
   void dump_config() override;
   void advance(int direction);
 
@@ -95,6 +96,12 @@ class AtmosComponent : public Component {
   void report_();
   void test_frame_();
   bool display_test_{false};
+  bool test_te_{false};     // display test paced by the panel's TE signal
+  bool test_ready_{false};  // next frame converted, waiting for TE
+  uint32_t test_te_seen_{0};
+  HighFrequencyLoopRequester test_hfl_;
+  void test_draw_();
+  void test_report_();
   uint32_t test_count_{0};
   FrameStats test_stats_;
 
