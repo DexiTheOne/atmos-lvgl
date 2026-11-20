@@ -2189,7 +2189,12 @@ static void draw_frame(lv_event_t *event){
         anim_t=t;
         lv_area_t box=animated_area(scene);
         lv_area_t lower=pm_lower_area();
-        if(area_within(&output->_clip_area,&box))draw_animated(scene);
+        /* On a 1-bit display LVGL widens every redrawn area to whole bytes (x to
+           multiples of 8) and clears it first, so the box's artwork redraw covers
+           the byte-widened box: anything static in those few extra columns must be
+           drawn by draw_animated() too (the self-test compares with full redraws). */
+        lv_area_t wide=box;wide.x1&=~7;wide.x2|=7;
+        if(area_within(&output->_clip_area,&wide))draw_animated(scene);
         else if(scene==2 && area_within(&output->_clip_area,&lower))draw_pm_lower();
         else draw_scene(scene);
         return;
