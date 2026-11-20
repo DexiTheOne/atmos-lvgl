@@ -599,7 +599,11 @@ bool ST7305RLCD::setup_spi_() {
   config.spics_io_num = -1;  // CS is held low by hand across a whole push
   config.queue_size = 8;
   config.flags = SPI_DEVICE_HALFDUPLEX | SPI_DEVICE_NO_DUMMY;
-  esp_err_t err = spi_bus_add_device(this->parent_->get_interface(), &config, &this->spi_);
+  // The bus ESPHome's spi: component initialised (its host is not exposed in every
+  // ESPHome version): adding a device fails on a host without an initialised bus.
+  esp_err_t err = spi_bus_add_device(SPI2_HOST, &config, &this->spi_);
+  if (err != ESP_OK)
+    err = spi_bus_add_device(SPI3_HOST, &config, &this->spi_);
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "spi_bus_add_device failed: %d", err);
     return false;
