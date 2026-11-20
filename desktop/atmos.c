@@ -888,6 +888,8 @@ static float chart_interpolate(const sample *samples,int n,double at,int key,con
    falls rather than jumping. The previous scale is frozen at the change. */
 static int chart_from_key=-1,chart_to_key=-1;
 static float chart_from_low,chart_from_high,chart_blend_age=UI_CHART_BLEND_TIME;
+/* Where the scale labels count from: the previous scale, or mid-count on a retarget. */
+static float label_from_low,label_from_high;
 /* The first sample's trace rises from the chart floor with the same easing. */
 static float chart_rise_age=UI_CHART_BLEND_TIME;
 static float chart_y(float value,float low,float high){
@@ -899,9 +901,12 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
     float q=ease(chart_blend_age/UI_CHART_BLEND_TIME),rise=ease(chart_rise_age/UI_CHART_BLEND_TIME);
     history_panel();
     chart_geometry();
+    /* The scale labels count from the previous reading's scale to the new one, as the
+       Particles scale does; the ticks stay put. */
+    float label_low=blend?mix(label_from_low,low,q):low,label_high=blend?mix(label_from_high,high,q):high;
     for(int i=0;i<=UI_CHART_Y_INTERVALS;i++){
         float fraction=(float)i/UI_CHART_Y_INTERVALS;
-        chart_tick(mix(low,high,fraction),mix(chart_bottom,UI_CHART_TOP,fraction));
+        chart_tick(mix(label_low,label_high,fraction),mix(chart_bottom,UI_CHART_TOP,fraction));
     }
     /* A reading with a start-up delay (the SEN6x) has no history before its sensor
        reports: the chart and its span start at its first valid sample, so the chart
@@ -987,8 +992,16 @@ static void selection_chart_range(int key,float *low,float *high){
    selection changes (automatic cycling resetting the next page) switch at once. */
 static void start_chart_blend(int s,int from,int to){
     if(s!=scene || moving){chart_blend_age=UI_CHART_BLEND_TIME;return;}
-    if(chart_blend_age<UI_CHART_BLEND_TIME)from=chart_to_key; /* retarget from the newest */
-    selection_chart_range(from,&chart_from_low,&chart_from_high);
+    if(chart_blend_age<UI_CHART_BLEND_TIME && chart_from_key>=0 && chart_to_key>=0){
+        /* Retarget: the trace from the newest reading, the labels from where they are. */
+        float q=ease(chart_blend_age/UI_CHART_BLEND_TIME);
+        selection_chart_range(chart_to_key,&chart_from_low,&chart_from_high);
+        float low=mix(label_from_low,chart_from_low,q),high=mix(label_from_high,chart_from_high,q);
+        label_from_low=low;label_from_high=high;from=chart_to_key;
+    }else{
+        selection_chart_range(from,&chart_from_low,&chart_from_high);
+        label_from_low=chart_from_low;label_from_high=chart_from_high;
+    }
     chart_from_key=from;chart_to_key=to;chart_blend_age=0;
 }
 /* Changing the underlined reading first wipes the old bar away left to right, then
