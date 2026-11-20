@@ -328,6 +328,12 @@ static void rect(int x,int y,int w,int h,bool reverse,int radius){
     lv_area_t a={x,y+(int)offset,x+w-1,y+(int)offset+h-1};lv_draw_rect(layer,&d,&a);
 }
 static void line(float x,float y,float xx,float yy,int width,bool reverse){
+    /* Straight 1 px lines (chart axes and ticks) as one span, not an LVGL task. */
+    if(width==1){
+        int x1=(int)round(x),y1=(int)round(y),x2=(int)round(xx),y2=(int)round(yy);
+        if(x1==x2){rect(x1,LV_MIN(y1,y2),1,abs(y2-y1)+1,reverse,0);return;}
+        if(y1==y2){rect(LV_MIN(x1,x2),y1,abs(x2-x1)+1,1,reverse,0);return;}
+    }
     lv_draw_line_dsc_t d;lv_draw_line_dsc_init(&d);
     d.p1.x=(int)round(x);d.p1.y=(int)round(y+offset);
     d.p2.x=(int)round(xx);d.p2.y=(int)round(yy+offset);
@@ -881,7 +887,15 @@ static void pill(int x,int y,int w,int h,int radius,bool paper){
 }
 /* Horizontal ink extent of text as LVGL actually renders it at x 0. Font
    metrics can be a pixel off from the drawn glyphs. */
+static void measure_ink_x(const char *text,int *left,int *right);
 static void rendered_ink_x(const char *text,int *left,int *right){
+    /* The caption text changes only with the span: remember recent measurements. */
+    static struct{char text[32];int left,right;}seen[8];static int next;
+    for(int i=0;i<8;i++)if(seen[i].text[0] && strcmp(seen[i].text,text)==0){*left=seen[i].left;*right=seen[i].right;return;}
+    measure_ink_x(text,left,right);
+    if(strlen(text)<sizeof seen[0].text){strcpy(seen[next].text,text);seen[next].left=*left;seen[next].right=*right;next=(next+1)%8;}
+}
+static void measure_ink_x(const char *text,int *left,int *right){
     lv_layer_t text_layer;lv_canvas_init_layer(axis_label_canvas,&text_layer);
     lv_draw_rect_dsc_t bg;lv_draw_rect_dsc_init(&bg);bg.bg_color=color(false);bg.bg_opa=255;
     lv_area_t full={0,0,AXIS_W-1,AXIS_H-1};lv_draw_rect(&text_layer,&bg,&full);
@@ -931,13 +945,20 @@ static float chart_sample(atmos_readings value,int key,const float *weights){
 /* Chart keys (field()) whose reading has a start-up delay (atmos_set_startup_delay()). */
 static bool startup_delay[8];
 static bool chart_valid(float value,int key){return isfinite(value) && (key==4 || value>=0);}
-static float chart_interpolate(const sample *samples,int n,double at,int key,const float *weights){
-    for(int i=1;i<n;i++)if(at<=samples[i].at){
+/* *cursor (start at 1) remembers where the last search ended: callers step `at`
+   forward, so each column resumes there instead of scanning from the start. */
+static float chart_interpolate_from(const sample *samples,int n,double at,int key,const float *weights,int *cursor){
+    for(int i=*cursor;i<n;i++)if(at<=samples[i].at){
+        *cursor=i;
         float a=chart_sample(samples[i-1].value,key,weights),b=chart_sample(samples[i].value,key,weights);
         if(!isfinite(a) || !isfinite(b) || (key!=4 && (a<0 || b<0)))return NAN;
         return mix(a,b,clamp((at-samples[i-1].at)/(samples[i].at-samples[i-1].at),0,1));
     }
+    *cursor=n;
     return n?chart_sample(samples[n-1].value,key,weights):NAN;
+}
+static float chart_interpolate(const sample *samples,int n,double at,int key,const float *weights){
+    int cursor=1;return chart_interpolate_from(samples,n,at,key,weights,&cursor);
 }
 /* Gases and Climate selection changes ease the trace in screen space from the
    previous reading's curve (on its own scale) to the new one, so it rises or
@@ -980,14 +1001,14 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
     /* A single sample spans the full width as a flat trace, so the chart does
        not start as one column and then jump to full width at the second. */
     float previous=NAN,trace[UI_CHART_RIGHT+1];
-    int begin=chart_left;
+    int begin=chart_left,cursor=1,from_cursor=1;
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
         double at=span>0?first+(last-first)*(x-chart_left)/(double)(UI_CHART_RIGHT-chart_left):last;
-        float value=chart_interpolate(samples,n,at,key,weights);
+        float value=chart_interpolate_from(samples,n,at,key,weights,&cursor);
         bool valid=isfinite(value) && (key==4 || value>=0);
         float y=valid?chart_y(value,low,high):NAN;
         if(blend){
-            float from=chart_interpolate(samples,n,at,chart_from_key,NULL);
+            float from=chart_interpolate_from(samples,n,at,chart_from_key,NULL,&from_cursor);
             if(isfinite(from) && (chart_from_key==4 || from>=0)){
                 float y0=chart_y(from,chart_from_low,chart_from_high);
                 y=valid?mix(y0,y,q):y0;valid=true;
