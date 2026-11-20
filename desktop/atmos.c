@@ -1949,7 +1949,8 @@ static inline unsigned frame_bit(const uint8_t *bits,int x,int y){
    64-bit multiplies become additions. */
 /* Exact integer square root of a non-negative 64-bit value. */
 static int64_t isqrt64(int64_t v){
-    int64_t r=(int64_t)sqrt((double)v);
+    /* Single-precision seed (the ESP32-S3 has no double unit); the loops make it exact. */
+    int64_t r=(int64_t)sqrtf((float)v);
     while(r*r>v)r--;
     while((r+1)*(r+1)<=v)r++;
     return r;
@@ -2156,10 +2157,19 @@ static void compose_ribbons(int32_t progress){
         int32_t delay=ribbon_lane_delay*LV_MIN(LV_ABS(k-1),5)/5+b*ribbon_column_step;
         half[k-lo][b]=(int32_t)(((int64_t)full*fx_window(progress,delay,FX*55/100))>>16);
     }
+    /* rel grows by one row (256) per y, so each column's nearest lane k0 is tracked
+       with its next threshold instead of a division per pixel. */
+    static int32_t col_rel[UI_WIDTH],col_next[UI_WIDTH];static int16_t col_k0[UI_WIDTH];
+    for(int x=0;x<UI_WIDTH;x++){
+        col_rel[x]=-ribbon_top-ribbon_wave[x];
+        int k=floor_div(col_rel[x]+gap/2,gap);
+        col_k0[x]=(int16_t)k;col_next[x]=(k+1)*gap-gap/2;
+    }
     for(int y=0;y<UI_HEIGHT;y++){
         for(int x=0;x<UI_WIDTH;x++){
-            int32_t rel=((int32_t)y<<8)-ribbon_top-ribbon_wave[x];
-            int k0=floor_div(rel+gap/2,gap);uint8_t code=CODE_OUT;
+            int32_t rel=col_rel[x];col_rel[x]+=256;
+            while(rel>=col_next[x]){col_k0[x]++;col_next[x]+=gap;}
+            int k0=col_k0[x];uint8_t code=CODE_OUT;
             for(int k=LV_MAX(k0-1,lo);k<=LV_MIN(k0+1,hi);k++){
                 int32_t h=half[k-lo][ribbon_bucket[x]],d=LV_ABS(rel-k*gap);
                 if(h<=0)continue;
