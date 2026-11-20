@@ -157,8 +157,8 @@ float atmos_compose_ms(void);
 uint32_t atmos_take_draw_us(void);
 /* Profiling slots (us since the last call): 0 CO2 outlines, 1 CO2 highlights, 2 dust floor, 3 dust specks. */
 void atmos_take_prof(uint32_t out[4]);
-/* Full-frame redraws since the last call, by cause: 0 moving, 1 data/settings (full_dirty),
-   2 PM blend/underline, 3 chart blend, 4 chart rise. */
+/* Redraws since the last call: 0 full (moving), 1 full (settings, overview), and band
+   redraws 2 header, 3 body, 4 history panel. */
 void atmos_take_full_reasons(uint32_t out[5]);
 int atmos_destination(void);
 /* Scene rasterised by a hold-time pre-render during the latest atmos_step(), or -1. */

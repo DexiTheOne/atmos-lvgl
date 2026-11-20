@@ -53,6 +53,22 @@ static double anim_t;
 /* Redraw the whole screen next frame (readings, history, selection or scene changed).
    Otherwise only the current scene's animated artwork is redrawn. */
 static bool full_dirty=true;
+/* Partial redraws by screen band: the header (title, rating badge, Wi-Fi), the body
+   between the header rule and the history panel (readings, artwork), and the history
+   panel. Data changes mark only their bands; draw_scene() draws only the bands its
+   clip area touches. */
+enum{BAND_HEADER=1,BAND_BODY=2,BAND_PANEL=4};
+static int dirty_bands;
+static lv_area_t band_area(int band){
+    return band==BAND_HEADER?(lv_area_t){0,0,UI_WIDTH-1,UI_HEADER_BOTTOM+UI_DIVIDER-1}:
+           band==BAND_BODY?(lv_area_t){0,UI_HEADER_BOTTOM+UI_DIVIDER,UI_WIDTH-1,UI_HISTORY_PANEL_Y-1}:
+           (lv_area_t){0,UI_HISTORY_PANEL_Y,UI_WIDTH-1,UI_HEIGHT-1};
+}
+static lv_layer_t *layer;static float offset;
+static bool band_hit(int band){
+    lv_area_t a=band_area(band);
+    return layer->_clip_area.y1<=a.y2+(int)offset && layer->_clip_area.y2>=a.y1+(int)offset;
+}
 /* Transition scenes are rasterised once per transition, not every frame. */
 static bool snapshots_ready;
 /* Bumped whenever displayed data changes (sample, readings, selection), so a
@@ -443,6 +459,7 @@ static void wifi_icon(void){
 }
 static int ink_width(const char *text,int size);
 static void detail_header(const char *title,const char *badge){
+    if(!band_hit(BAND_HEADER))return;
     /* Titles are capitals: centre the cap height, so a tail (the Q in
        AIR QUALITY) neither raises the title nor differs between pages. */
     lv_area_t ink=header_ink_bounds(title,dashboard_font(UI_FONT_TITLE));
@@ -806,6 +823,7 @@ static void chart_geometry(void){
     chart_bottom=UI_CHART_BOTTOM+grow;chart_tick_y=UI_CHART_TICK_Y+grow;
 }
 static void history_panel(void){
+    if(!band_hit(BAND_PANEL))return;
     rect(0,UI_HISTORY_PANEL_Y,UI_WIDTH,UI_HEIGHT-UI_HISTORY_PANEL_Y,false,0);
 }
 /* One axis renderer for every history, including the animated PM scale. */
@@ -905,6 +923,7 @@ static float chart_y(float value,float low,float high){
 }
 static void history_graph(const sample *samples,int n,int key,const float *weights,
                           const char *name,const char *unit,float low,float high){
+    if(!band_hit(BAND_PANEL))return;
     bool blend=!weights && chart_blend_age<UI_CHART_BLEND_TIME && key==chart_to_key && chart_from_key>=0;
     float q=ease(chart_blend_age/UI_CHART_BLEND_TIME),rise=ease(chart_rise_age/UI_CHART_BLEND_TIME);
     history_panel();
@@ -1048,6 +1067,7 @@ static void draw_co2_detail(void){
     int size=co2_value_size();
     char value[32];format_reading(value,sizeof value,sensor.co2,0,true);
     detail_header("CARBON DIOXIDE",reading_badge(ATMOS_CO2));
+    if(band_hit(BAND_BODY)){
     /* Center the visible value/unit block, not the fonts' padded line boxes.
        Canonical digit bounds keep its position stable as readings change. */
     lv_area_t digits=header_ink_bounds("0123456789.k",dashboard_font(size));
@@ -1060,6 +1080,7 @@ static void draw_co2_detail(void){
     centered_text(value,center,value_y,size,false);
     centered_text("PPM",center,value_y+unit_offset,UI_CO2_UNIT_SIZE,false);
     co2_live_bubbles();
+    }
     history_panel();
     history_chart(0,"CO2","PPM",UI_CHART_MIN_RANGE,UI_CHART_PADDING);
 }
@@ -1301,6 +1322,7 @@ static void draw_pm_lower(void){
 static void draw_pm_detail(void){
     const char *unit="\xc2\xb5" "g/m\xc2\xb3";
     detail_header("PARTICLES",reading_badge(ATMOS_PM1+pm_selected));
+    if(band_hit(BAND_BODY)){
     char value[32];
     format_reading(value,sizeof value,pm_value(sensor,pm_selected)<0?NAN:pm_value(sensor,pm_selected),1,false);
     int y[3],value_y[2];
@@ -1309,6 +1331,7 @@ static void draw_pm_detail(void){
     centered_text(value,center,value_y[0],pm_value_size(),false);
     centered_text(unit,center,value_y[1],UI_FONT_UNIT,false);pm_particle_field();
     pm_cards(y[2]);
+    }
     pm_history_chart();
 }
 static void climate_chart(int key,int top){
@@ -1476,6 +1499,7 @@ static void draw_hcho_detail(void){
     int size=hcho_value_size();
     char value[32];format_reading(value,sizeof value,sensor.hcho,1,false);
     detail_header("FORMALDEHYDE",reading_badge(ATMOS_HCHO));
+    if(band_hit(BAND_BODY)){
     /* Centred like the CO2 value/unit block, on canonical ink bounds. */
     lv_area_t digits=header_ink_bounds("0123456789.",dashboard_font(size));
     lv_area_t unit=header_ink_bounds("PPB",dashboard_font(UI_HCHO_UNIT_SIZE));
@@ -1487,6 +1511,7 @@ static void draw_hcho_detail(void){
     centered_text(value,center,value_y,size,false);
     centered_text("PPB",center,value_y+unit_offset,UI_HCHO_UNIT_SIZE,false);
     hcho_molecules();
+    }
     history_panel();
     history_chart(7,"HCHO","PPB",UI_HCHO_CHART_MIN_RANGE,UI_CHART_PADDING);
 }
@@ -1544,6 +1569,7 @@ static void climate_icons(const climate_layout_t *l){
 }
 static void draw_climate_detail(void){
     detail_header("CLIMATE",reading_badge(ATMOS_TEMPERATURE+climate_selected));
+    if(band_hit(BAND_BODY)){
     climate_layout_t l=climate_layout();
     int label_base=font_baseline(UI_CLIMATE_LABEL_SIZE),unit_base=font_baseline(UI_CLIMATE_UNIT_SIZE),
         value_base=font_baseline(UI_CLIMATE_VALUE_SIZE);
@@ -1567,7 +1593,9 @@ static void draw_climate_detail(void){
         dashboard_text(shown_unit(4+row),unit_left-ink.x1,b-unit_base,UI_CLIMATE_UNIT_SIZE,false);
         rect(l.divider_x,l.row_center[row]-UI_CLIMATE_ICON_SIZE/2,UI_DIVIDER,UI_CLIMATE_ICON_SIZE,false,0);
     }
-    climate_icons(&l);history_panel();
+    climate_icons(&l);
+    }
+    history_panel();
     climate_chart(4+climate_selected,UI_CHART_TOP);
 }
 /* Ribbon weight follows the same cutoffs as the rating badge: half weight at
@@ -1624,7 +1652,8 @@ static void gas_ribbons(void){
         for(int x=left;x<=right;x++){
             float y=center+wave[x-left];
             if(lane==1){
-                if(x>left)line(x-1,center+wave[x-1-left],x,y,1,false);
+                /* Bresenham spans, not an LVGL line task per column. */
+                if(x>left)gas_line(x-1,center+wave[x-1-left],x,y,1,false);
                 continue;
             }
             float w=half[lane/2]*taper[x-left];
@@ -1658,6 +1687,7 @@ static void gas_chart(int key,int top){
    readings change; each string is centred on its column by its own ink. */
 static void draw_gas_detail(void){
     detail_header("GASES",reading_badge(ATMOS_VOC+gas_selected));
+    if(band_hit(BAND_BODY)){
     lv_area_t label=header_ink_bounds("VOCNOx",dashboard_font(UI_GAS_LABEL_SIZE));
     lv_area_t digits=header_ink_bounds("0123456789.-",dashboard_font(UI_GAS_VALUE_SIZE));
     lv_area_t unit=header_ink_bounds("Index",dashboard_font(UI_FONT_UNIT));
@@ -1691,7 +1721,9 @@ static void draw_gas_detail(void){
         centered_text(values[col],center,value_top-digits.y1,UI_GAS_VALUE_SIZE,false);
         centered_text("Index",center,unit_top-unit.y1,UI_CLIMATE_UNIT_SIZE,false);
     }
-    gas_ribbons();history_panel();
+    gas_ribbons();
+    }
+    history_panel();
     gas_chart(gas_selected?3:2,UI_CHART_TOP);
 }
 static void draw_scene(int which){
@@ -2237,11 +2269,21 @@ static void invalidate_frame(void){
     if(admitted!=pm_last_admitted){pm_last_admitted=admitted;pm_last_tick=INT64_MIN;}
     /* The Particles selection blend (card fill and chart) stays below the field. */
     bool pm_lower=scene==2 && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME);
-    if(moving || full_dirty || (!pm_lower && (pm_blend_age<UI_PM_TRANSITION_TIME ||
-       underline_age<UI_UNDERLINE_TIME)) || chart_blend_age<UI_CHART_BLEND_TIME || chart_rise_age<UI_CHART_BLEND_TIME){
-        full_reasons[moving?0:full_dirty?1:chart_blend_age<UI_CHART_BLEND_TIME?3:chart_rise_age<UI_CHART_BLEND_TIME?4:2]++;
-        lv_obj_invalidate(surface);full_dirty=false;
-    }else if(pm_lower){
+    /* The overview has no bands: any change redraws it (it is static otherwise). */
+    if(moving || full_dirty || (scene==0 && dirty_bands)){
+        full_reasons[moving?0:1]++;
+        lv_obj_invalidate(surface);full_dirty=false;dirty_bands=0;
+        pm_last_tick=(int64_t)floor(t*UI_PM_FIELD_FPS);
+        return;
+    }
+    int bands=dirty_bands;dirty_bands=0;
+    if(!pm_lower && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME))bands|=BAND_BODY|BAND_PANEL;
+    if(chart_blend_age<UI_CHART_BLEND_TIME || chart_rise_age<UI_CHART_BLEND_TIME)bands|=BAND_PANEL;
+    if(bands&BAND_HEADER)full_reasons[2]++;
+    if(bands&BAND_BODY)full_reasons[3]++;
+    if(bands&BAND_PANEL)full_reasons[4]++;
+    for(int b=BAND_HEADER;b<=BAND_PANEL;b<<=1)if(bands&b){lv_area_t a=band_area(b);lv_obj_invalidate_area(surface,&a);}
+    if(pm_lower){
         lv_area_t a=pm_lower_area();lv_obj_invalidate_area(surface,&a);
         if((int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick){a=animated_area(2);lv_obj_invalidate_area(surface,&a);}
     }else if(scene!=0 && (scene!=2 || (int64_t)floor(t*UI_PM_FIELD_FPS)!=pm_last_tick)){
@@ -2273,6 +2315,7 @@ static void take_sample(void){
         sensor.pm1=fminf(sensor.pm1,UI_SENSOR_PM_MAX);sensor.pm4=fminf(sensor.pm4,UI_SENSOR_PM_MAX);
         sensor.pm10=fminf(sensor.pm10,UI_SENSOR_PM_MAX);sensor.pressure=fminf(sensor.pressure,UI_SENSOR_PRESSURE_MAX);
         sensor.hcho=fminf(sensor.hcho,UI_SENSOR_HCHO_MAX);
+        dirty_bands|=BAND_HEADER|BAND_BODY; /* demo readings changed, as atmos_set_readings() */
     }
     prune_history();
     /* After the span grows the buffer can fill before the oldest sample expires: drop
@@ -2287,7 +2330,7 @@ static void take_sample(void){
     unsigned seen=0,now=0;
     for(int i=0;i<count;i++)for(int k=0;k<8;k++)if(chart_valid(field(history[i].value,k),k))seen|=1u<<k;
     for(int k=0;k<8;k++)if(chart_valid(field(sensor,k),k))now|=1u<<k;
-    history[count++]=(sample){t,sensor};full_dirty=true;data_version++;
+    history[count++]=(sample){t,sensor};dirty_bands|=BAND_PANEL;data_version++;
     if(count==1 || (now&~seen))chart_rise_age=0;
 }
 /* Boot splash. The ink of the name and the badge forms one group centred on the screen. */
@@ -2501,7 +2544,7 @@ void atmos_step(double dt){
     chart_rise_age=fminf(UI_CHART_BLEND_TIME,chart_rise_age+(float)dt);
     underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)dt);
     if(blending && pm_blend_age>=UI_PM_TRANSITION_TIME && chart_blend_age>=UI_CHART_BLEND_TIME &&
-       chart_rise_age>=UI_CHART_BLEND_TIME && underline_age>=UI_UNDERLINE_TIME)full_dirty=true;
+       chart_rise_age>=UI_CHART_BLEND_TIME && underline_age>=UI_UNDERLINE_TIME)dirty_bands|=BAND_BODY|BAND_PANEL;
     float concentration=isfinite(sensor.pm10)?clamp(sensor.pm10,0,UI_PM_DENSITY_LIMIT):0;
     float density_target=UI_PM_DENSITY_MIN+(UI_PM_PARTICLE_MAX-UI_PM_DENSITY_MIN)*
         concentration/(concentration+UI_PM_DENSITY_HALF);
@@ -2605,11 +2648,11 @@ void atmos_set_startup_delay(int reading,bool on){
     if(reading<0 || reading>=ATMOS_READINGS)return;
     startup_delay[key[reading]]=on;reading_delayed[reading]=on;full_dirty=true;data_version++;
 }
-void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;full_dirty=true;data_version++;update_alerts();}
+void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;dirty_bands|=BAND_HEADER|BAND_BODY;data_version++;update_alerts();}
 void atmos_set_wifi(int bars){
     bars=bars<0?-1:bars>3?3:bars;
     if(bars==wifi_bars)return;
-    wifi_bars=bars;full_dirty=true;data_version++;if(surface)lv_obj_invalidate(surface);
+    wifi_bars=bars;dirty_bands|=BAND_HEADER;data_version++;
 }
 int atmos_wifi(void){return wifi_bars;}
 static void units_changed(void){

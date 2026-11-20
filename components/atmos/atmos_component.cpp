@@ -795,7 +795,7 @@ void AtmosComponent::report_() {
   float secs = this->report_ms_ / 1000.0f;
   uint32_t full[5];
   atmos_take_full_reasons(full);
-  ESP_LOGI(TAG, "FULL redraws: moving %u  data/settings %u  pm blend %u  chart blend %u  chart rise %u  | wifi icon changes %u",
+  ESP_LOGI(TAG, "REDRAWS full: moving %u  settings/overview %u  | bands: header %u  body %u  panel %u  | wifi icon changes %u",
            (unsigned) full[0], (unsigned) full[1], (unsigned) full[2], (unsigned) full[3], (unsigned) full[4],
            (unsigned) this->wifi_changes_);
   this->wifi_changes_ = 0;
