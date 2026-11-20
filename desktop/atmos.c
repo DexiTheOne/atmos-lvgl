@@ -1045,6 +1045,40 @@ static float chart_interpolate_from(const sample *samples,int n,double at,int ke
     *cursor=n;
     return n?chart_sample(samples[n-1].value,key,weights):NAN;
 }
+/* The same interpolation over values converted once per draw (chart_sample()
+   per sample, not per column; the PM mix and unit conversion are not free). */
+static float chart_interpolate_values(const sample *samples,const float *values,int n,double at,int key,int *cursor){
+    for(int i=*cursor;i<n;i++)if(at<=samples[i].at){
+        *cursor=i;
+        float a=values[i-1],b=values[i];
+        if(!isfinite(a) || !isfinite(b) || (key!=4 && (a<0 || b<0)))return NAN;
+        return mix(a,b,clamp((at-samples[i-1].at)/(samples[i].at-samples[i-1].at),0,1));
+    }
+    *cursor=n;
+    return n?values[n-1]:NAN;
+}
+/* Chart columns written straight into an I1 layer: the paper fill below the
+   trace and the trace span, one pass per column instead of two direct_fill()
+   calls. Same pixels as chart_fill_span() then rect(). */
+typedef struct{lv_draw_buf_t *buf;int x1,y1,x2,y2,bx,by;}column_writer;
+static bool column_writer_init(column_writer *w){
+    lv_draw_buf_t *buf=layer->draw_buf;
+    if(!buf || buf->header.cf!=LV_COLOR_FORMAT_I1)return false;
+    sync_layer(layer);
+    const lv_area_t *clip=&layer->_clip_area;lv_area_t b=layer->buf_area;
+    w->buf=buf;w->bx=b.x1;w->by=b.y1;
+    w->x1=LV_MAX(clip->x1,b.x1);w->y1=LV_MAX(clip->y1,b.y1);
+    w->x2=LV_MIN(clip->x2,b.x1+(int)buf->header.w-1);w->y2=LV_MIN(clip->y2,b.y1+(int)buf->header.h-1);
+    return true;
+}
+static void column_paper(const column_writer *w,int x,int top,int bottom){
+    if(x<w->x1 || x>w->x2)return;
+    top=LV_MAX(top,w->y1);bottom=LV_MIN(bottom,w->y2);
+    if(top>bottom)return;
+    uint32_t stride=w->buf->header.stride;
+    uint8_t *p=lv_draw_buf_goto_xy(w->buf,0,(uint32_t)(top-w->by))+((x-w->bx)>>3),bit=(uint8_t)(0x80>>((x-w->bx)&7));
+    for(int y=top;y<=bottom;y++,p+=stride)*p|=bit;
+}
 static float chart_interpolate(const sample *samples,int n,double at,int key,const float *weights){
     int cursor=1;return chart_interpolate_from(samples,n,at,key,weights,&cursor);
 }
@@ -1088,25 +1122,28 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
     if(!n){chart_axes(name,unit,span);history_caption(span);return;}
     /* A single sample spans the full width as a flat trace, so the chart does
        not start as one column and then jump to full width at the second. */
-    float previous=NAN,trace[UI_CHART_RIGHT+1];
+    float previous=NAN,trace[UI_CHART_RIGHT+1],values[HISTORY_CAP],from_values[HISTORY_CAP];
+    if(n>HISTORY_CAP)n=HISTORY_CAP;
+    for(int i=0;i<n;i++){
+        values[i]=chart_sample(samples[i].value,key,weights);
+        if(blend)from_values[i]=chart_sample(samples[i].value,chart_from_key,NULL);
+    }
     int begin=chart_left,cursor=1,from_cursor=1;
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
         double at=span>0?first+(last-first)*(x-chart_left)/(double)(UI_CHART_RIGHT-chart_left):last;
-        float value=chart_interpolate_from(samples,n,at,key,weights,&cursor);
+        float value=chart_interpolate_values(samples,values,n,at,key,&cursor);
         bool valid=isfinite(value) && (key==4 || value>=0);
         float y=valid?chart_y(value,low,high):NAN;
         if(blend){
-            float from=chart_interpolate_from(samples,n,at,chart_from_key,NULL,&from_cursor);
+            float from=chart_interpolate_values(samples,from_values,n,at,chart_from_key,&from_cursor);
             if(isfinite(from) && (chart_from_key==4 || from>=0)){
                 float y0=chart_y(from,chart_from_low,chart_from_high);
                 y=valid?mix(y0,y,q):y0;valid=true;
             }
         }
-        if(!valid){trace[x-chart_left]=NAN;continue;}
-        y=mix(chart_bottom,y,rise);
-        chart_fill_span(x,(int)ceil(y),chart_bottom);
-        trace[x-chart_left]=y;
+        trace[x-chart_left]=valid?mix(chart_bottom,y,rise):NAN;
     }
+    column_writer w={0};bool direct=column_writer_init(&w);
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
         float y=trace[x-chart_left];
         if(!isfinite(y)){previous=NAN;continue;}
@@ -1114,7 +1151,13 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
            LVGL lines thresholded to 1 bit left ink holes on steep slopes. */
         float lo=isfinite(previous)?fminf(previous,y):y,hi=isfinite(previous)?fmaxf(previous,y):y;
         int top=(int)lroundf(lo)-UI_CHART_LINE_WIDTH/2,bottom=(int)lroundf(hi)+(UI_CHART_LINE_WIDTH-1)/2;
-        rect(x,top,1,bottom-top+1,true,0);
+        if(direct){
+            column_paper(&w,x,(int)ceil(y),chart_bottom-1);
+            column_paper(&w,x,top+(int)offset,bottom+(int)offset);
+        }else{
+            chart_fill_span(x,(int)ceil(y),chart_bottom);
+            rect(x,top,1,bottom-top+1,true,0);
+        }
         previous=y;
     }
     chart_axes(name,unit,span);
