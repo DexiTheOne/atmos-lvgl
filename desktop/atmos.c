@@ -2163,7 +2163,17 @@ static void draw_animated(int which){
         case 2:pm_particle_field();break;case 3:gas_ribbons();break;case 5:hcho_molecules();break;
         default:{climate_layout_t l=climate_layout();climate_icons(&l);}break;}
 }
+/* Time spent in draw() since the last atmos_take_draw_us() (device profiling). LVGL
+   draw tasks queued here (arcs, lines, text) run later, in LVGL's dispatch. */
+static uint32_t draw_us_total;
+uint32_t atmos_take_draw_us(void){uint32_t v=draw_us_total;draw_us_total=0;return v;}
+static void draw_frame(lv_event_t *event);
 static void draw(lv_event_t *event){
+    uint32_t start=clock_us?clock_us():0;
+    draw_frame(event);
+    if(clock_us)draw_us_total+=clock_us()-start;
+}
+static void draw_frame(lv_event_t *event){
     lv_layer_t *output=lv_event_get_layer(event);layer=output;offset=0;transition_drawn=false;
     if(!moving){
         anim_t=t;
@@ -2181,17 +2191,7 @@ static void draw(lv_event_t *event){
         anim_t=start+duration;render_scene_buffer(1,destination);
         anim_t=t;snapshots_ready=true;
     }
-/* Time spent in draw() since the last atmos_take_draw_us() (device profiling). LVGL
-   draw tasks queued here (arcs, lines, text) run later, in LVGL's dispatch. */
-static uint32_t draw_us_total;
-uint32_t atmos_take_draw_us(void){uint32_t v=draw_us_total;draw_us_total=0;return v;}
-static void draw_frame(lv_event_t *event);
     uint32_t compose_start=clock_us?clock_us():0;
-    uint32_t start=clock_us?clock_us():0;
-    draw_frame(event);
-    if(clock_us)draw_us_total+=clock_us()-start;
-}
-static void draw_frame(lv_event_t *event){
     compose_transition(intro?0:scene,destination,(int32_t)(clamp(movement/duration,0,1)*FX));
     if(clock_us){compose_us_total+=clock_us()-compose_start;compose_count++;}
     layer=output;blit_transition(output);transition_drawn=true;

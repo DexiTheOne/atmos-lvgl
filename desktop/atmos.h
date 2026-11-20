@@ -153,13 +153,13 @@ const char *atmos_overrun_detail(void);
 /* Optional profiling: a microsecond clock, and the average transition compose time. */
 void atmos_set_clock(uint32_t (*us)(void));
 float atmos_compose_ms(void);
+/* Microseconds spent in the UI's draw callback since the last call (needs atmos_set_clock()). */
+uint32_t atmos_take_draw_us(void);
 int atmos_destination(void);
 /* Scene rasterised by a hold-time pre-render during the latest atmos_step(), or -1. */
 int atmos_step_prerendered(void);
 /* Status LEDs. Transition progress 0..1 while moving, else -1. The reading whose
    rating a scene shows (its underlined reading; the overview's worst-rated one), or -1.
-/* Microseconds spent in the UI's draw callback since the last call (needs atmos_set_clock()). */
-uint32_t atmos_take_draw_us(void);
    The index of the band holding a reading's value in its atmos_set_bands() list and
    that band's level, or -1 when it has no rating. */
 float atmos_transition_progress(void);
