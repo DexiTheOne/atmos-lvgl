@@ -75,8 +75,11 @@ static bool snapshots_ready;
    pre-rendered snapshot made before the change is not used. */
 static unsigned data_version;
 /* Automatic cycling: the next transition's time and destination are known, so its
-   two snapshots are rasterised during the hold, one per step, after the last
-   history sample before it. pre_stage: 0 none, 1 outgoing done, 2 both done. */
+   two snapshots are rasterised during the hold, one screen band per step (header,
+   body, history panel; the overview, which has no bands, in one step), after the
+   last history sample before it. pre_stage counts bands: 0-2 outgoing, 3-5
+   incoming, PRE_DONE both done. */
+#define PRE_DONE 6
 static int pre_from=-1,pre_to=-1,pre_stage;
 static double pre_start;
 static unsigned pre_version,prerendered_transitions;
@@ -2292,11 +2295,15 @@ static void compose_transition(int from,int to,int32_t progress){
     default:compose_atom(progress);break;
     }
 }
-static void render_scene_buffer(int index,int which){
+/* Rasterises a scene into a snapshot canvas: every band, or one (BAND_*), whose
+   clip leaves the rest of the canvas as it was. */
+static void render_scene_band(int index,int which,int band){
     lv_layer_t offscreen;lv_canvas_init_layer(scene_canvas[index],&offscreen);
+    if(band)offscreen._clip_area=band_area(band);
     layer=&offscreen;offset=0;draw_scene(which);
     lv_canvas_finish_layer(scene_canvas[index],&offscreen);
 }
+static void render_scene_buffer(int index,int which){render_scene_band(index,which,0);}
 static void paint_splash(void);
 static float transition_duration(int from,int to);
 static void splash_portal(void);
@@ -2666,10 +2673,13 @@ static void prerender_step(void){
         pre_stage=0;pre_from=scene;pre_to=to;pre_version=data_version;pre_start=start;
     }
     /* Wait for the last sample before the transition so the snapshot shows its data. */
-    if(pre_stage==2 || next_sample<=start+1e-4)return;
-    if(pre_stage==0){anim_t=start;render_scene_buffer(0,scene);prepare_effect(scene,to);prerendered_last_step=scene;}
-    else{anim_t=start+transition_duration(scene,to);render_scene_buffer(1,to);prerendered_last_step=to;}
-    anim_t=t;pre_stage++;
+    if(pre_stage>=PRE_DONE || next_sample<=start+1e-4)return;
+    bool outgoing=pre_stage<3;int which=outgoing?scene:to;
+    anim_t=outgoing?start:start+transition_duration(scene,to);
+    if(which==0){render_scene_buffer(outgoing?0:1,which);pre_stage=outgoing?2:5;}
+    else render_scene_band(outgoing?0:1,which,1<<(pre_stage%3));
+    if(pre_stage==2)prepare_effect(scene,to); /* anchors from the finished outgoing snapshot */
+    prerendered_last_step=which;anim_t=t;pre_stage++;
 }
 void atmos_step(double dt){
     if(paused || hidden || dt<=0)return;
@@ -2753,7 +2763,7 @@ void atmos_set_scene(int requested){
     duration=transition_duration(scene,requested);
     /* Use the hold-time snapshots when they match; the transition clock then starts
        at their time so the end still meets the live scene exactly. */
-    bool ready=pre_stage==2 && pre_from==scene && pre_to==requested && pre_version==data_version && pre_start<=t+1e-4;
+    bool ready=pre_stage==PRE_DONE && pre_from==scene && pre_to==requested && pre_version==data_version && pre_start<=t+1e-4;
     double start=ready?pre_start:t;
     destination=requested;movement=t-start;moving=true;snapshots_ready=ready;pre_stage=0;
     if(ready)prerendered_transitions++;
@@ -2981,8 +2991,8 @@ int atmos_self_test(void){
         /* Automatic cycling pre-renders the next transition during the hold. Its
            snapshots must equal fresh renders at the snapshot times. */
         automatic=true;
-        for(int i=0;i<2000 && pre_stage<2;i++)atmos_step(.025f);
-        if(pre_stage!=2)return 23;
+        for(int i=0;i<2000 && pre_stage<PRE_DONE;i++)atmos_step(.025f);
+        if(pre_stage!=PRE_DONE)return 23;
         static uint8_t saved[2][I1_PALETTE+FRAME_BYTES];
         memcpy(saved,scene_buf,sizeof saved);
         anim_t=pre_start;render_scene_buffer(0,pre_from);
