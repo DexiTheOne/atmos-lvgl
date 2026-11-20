@@ -539,6 +539,8 @@ bool AtmosComponent::collect_push_(uint32_t &interval, uint32_t &lag, uint32_t &
 void AtmosComponent::frame_te_() {
   uint32_t now = micros();
   auto *p = this->panel_;
+  uint32_t wake_late = this->wake_at_ != 0 ? now - this->wake_at_ : 0;
+  this->wake_at_ = 0;
   if (this->pending_) {
     // The previous frame is drawn but its predecessor's push is not done yet.
     if (!p->present(this->last_target_)) {
@@ -559,6 +561,10 @@ void AtmosComponent::frame_te_() {
       this->current_transition_.add(interval, this->last_work_, lag, push, expected);
     if (late && this->div_ == 1)
       this->div_ = 2;  // until the next scene or transition
+    if (late && this->frame_stats_)
+      ESP_LOGI(TAG, "late frame: woke %.1f ms after its pulse, work %.1f ms (pre-render %d, convert %.1f), scene %d moving %d",
+               this->late_info_[0] / 1000.0f, this->last_work_ / 1000.0f, (int) this->late_info_[1],
+               this->late_info_[2] / 1000.0f, atmos_scene(), (int) moving);
   }
 
   uint32_t period = this->te_period_(), min_div = this->min_div_();
@@ -617,6 +623,9 @@ void AtmosComponent::frame_te_() {
   this->service_(timer_us, publish_us);
   if (this->frame_flushed_) {
     this->last_work_ = work;
+    this->late_info_[0] = wake_late;
+    this->late_info_[1] = (uint32_t) pre;
+    this->late_info_[2] = this->convert_us_;
     this->pushed_moving_ = moving || atmos_is_moving();
     if (!p->present(target))
       this->pending_ = true;
@@ -631,6 +640,8 @@ void AtmosComponent::frame_te_() {
   int32_t wait = (int32_t) (p->te_time_us() + (int32_t) (target - p->te_count()) * (int32_t) period - micros());
   if (this->pending_)
     wait = 1000;
+  else
+    this->wake_at_ = micros() + std::max<int32_t>(wait, 0);
   this->set_timeout("frame", wait > 0 ? (wait + 999) / 1000 : 0, [this]() { this->frame_(); });
 }
 
