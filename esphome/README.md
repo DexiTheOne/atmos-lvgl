@@ -316,13 +316,13 @@ Real panel (`atmos`, over OTA), with Wi-Fi, the API and sensors running.
 
 | | Frame intervals | Late | Render (work) | Push |
 |---|---|---|---|---|
-| Transitions | 58.4 ms (17.1â€“17.8 fps), exact multiples of 29.2 ms | 0â€“4 per transition run | 19â€“44 ms avg | 3.6â€“3.8 ms |
-| Still scenes | 66â€“76 ms avg (13â€“15 fps) | 20â€“40 of about 140 | 37â€“42 ms avg, max 60â€“120 | 1.3â€“1.5 ms |
+| Transitions | 58.4 ms (17.1–17.8 fps), exact multiples of 29.2 ms | 0–4 per transition run | 19–44 ms avg | 3.6–3.8 ms |
+| Still scenes | 66–76 ms avg (13–15 fps) | 20–40 of about 140 | 37–42 ms avg, max 60–120 | 1.3–1.5 ms |
 
 - Every frame interval is a whole number of refreshes: frames are no longer drawn mid-refresh, and none are lost between refreshes.
-- Partial pushes send 3.2â€“5 KB on average instead of 15 KB.
-- No scene's frames fit in one refresh yet (PROFILE still 31â€“48 ms), so everything runs every second refresh; still scenes at 37â€“42 ms of work plus housekeeping miss the 58 ms slot on a fifth to a third of frames, then show for three refreshes. Rendering speed is the next limit.
-- UI busy 65â€“68 % of the CPU.
+- Partial pushes send 3.2–5 KB on average instead of 15 KB.
+- No scene's frames fit in one refresh yet (PROFILE still 31–48 ms), so everything runs every second refresh; still scenes at 37–42 ms of work plus housekeeping miss the 58 ms slot on a fifth to a third of frames, then show for three refreshes. Rendering speed is the next limit.
+- UI busy 65–68 % of the CPU.
 
 ## Status LEDs (atmos_led)
 
