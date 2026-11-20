@@ -261,7 +261,8 @@ static char overrun_detail[160];
 /* Optional microsecond clock from the platform, for on-device profiling. */
 static uint32_t (*clock_us)(void);
 static uint32_t compose_us_total,compose_count;
-static uint32_t prof_us[4],full_reasons[5];
+static uint32_t prof_us[4],full_reasons[5],band_us[8],band_n[8];
+void atmos_take_band_cost(uint32_t us[8],uint32_t n[8]){for(int i=0;i<8;i++){us[i]=band_us[i];n[i]=band_n[i];band_us[i]=band_n[i]=0;}}
 void atmos_take_full_reasons(uint32_t out[5]){for(int i=0;i<5;i++){out[i]=full_reasons[i];full_reasons[i]=0;}}
 #define PROF_START uint32_t prof_t=clock_us?clock_us():0
 #define PROF_LAP(i) do{if(clock_us){uint32_t n_=clock_us();prof_us[i]+=n_-prof_t;prof_t=n_;}}while(0)
@@ -2229,7 +2230,12 @@ static void draw_frame(lv_event_t *event){
         lv_area_t wide=box;wide.x1&=~7;wide.x2|=7;
         if(area_within(&output->_clip_area,&wide))draw_animated(scene);
         else if(scene==2 && area_within(&output->_clip_area,&lower))draw_pm_lower();
-        else draw_scene(scene);
+        else{
+            int mask=(band_hit(BAND_HEADER)?1:0)|(band_hit(BAND_BODY)?2:0)|(band_hit(BAND_PANEL)?4:0);
+            uint32_t start=clock_us?clock_us():0;
+            draw_scene(scene);
+            if(clock_us){band_us[mask]+=clock_us()-start;band_n[mask]++;}
+        }
         return;
     }
     if(!snapshots_ready){

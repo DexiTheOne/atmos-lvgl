@@ -157,6 +157,8 @@ float atmos_compose_ms(void);
 uint32_t atmos_take_draw_us(void);
 /* Profiling slots (us since the last call): 0 CO2 outlines, 1 CO2 highlights, 2 dust floor, 3 dust specks. */
 void atmos_take_prof(uint32_t out[4]);
+/* Scene redraw cost by the bands drawn (mask 1 header, 2 body, 4 panel): us and count. */
+void atmos_take_band_cost(uint32_t us[8],uint32_t n[8]);
 /* Redraws since the last call: 0 full (moving), 1 full (settings, overview), and band
    redraws 2 header, 3 body, 4 history panel. */
 void atmos_take_full_reasons(uint32_t out[5]);

@@ -520,7 +520,7 @@ bool AtmosComponent::collect_push_(uint32_t &interval, uint32_t &lag, uint32_t &
   auto r = p->last_push();
   interval = this->last_push_te_ != 0 ? r.edge_us - this->last_push_te_ : this->expected_us_();
   this->last_push_te_ = r.edge_us;  // micros() of the pulse (or present) it went out at
-  lag = r.start_us - r.edge_us;
+  lag = (int32_t) (r.start_us - r.edge_us) > 0 ? r.start_us - r.edge_us : 0;
   push = r.us;
   late = (int32_t) (r.te - r.target) > 0;
   this->push_bytes_sum_ += r.bytes;
@@ -799,6 +799,12 @@ void AtmosComponent::report_() {
            (unsigned) full[0], (unsigned) full[1], (unsigned) full[2], (unsigned) full[3], (unsigned) full[4],
            (unsigned) this->wifi_changes_);
   this->wifi_changes_ = 0;
+  uint32_t bus[8], bn[8];
+  atmos_take_band_cost(bus, bn);
+  for (int m = 1; m < 8; m++)
+    if (bn[m] != 0)
+      ESP_LOGI(TAG, "BANDS scene %d %s%s%s: %u redraws, %.1f ms avg", atmos_scene(), m & 1 ? "header " : "",
+               m & 2 ? "body " : "", m & 4 ? "panel" : "", (unsigned) bn[m], bus[m] / 1000.0f / bn[m]);
   ESP_LOGI(TAG, "PARTS ms per second: CO2 outlines %.1f highlights %.1f | dust floor %.1f specks %.1f",
            prof[0] / 1000.0f / secs, prof[1] / 1000.0f / secs, prof[2] / 1000.0f / secs, prof[3] / 1000.0f / secs);
   ESP_LOGI(TAG, "missed model steps %u  |  heap internal free %u (min %u, largest %u)  PSRAM free %u",
