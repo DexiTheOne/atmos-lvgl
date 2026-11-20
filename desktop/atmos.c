@@ -380,7 +380,89 @@ static const lv_font_t *dashboard_font(int size){
     case 60:return &ui_bold_60;case 48:return &ui_bold_48;case 40:return &ui_bold_40;case 32:return &ui_bold_32;
     case 28:return &ui_bold_28;case 24:return &ui_bold_24;default:return &ui_bold_16;}
 }
+/* Baked text. Strings repeat from frame to frame (titles, units, readings, chart
+   labels), and drawing them through LVGL's label renderer cost several milliseconds
+   per band on the device. Each string is rendered once by LVGL into a 1-bit canvas,
+   its ink kept as a packed bitmap, and later draws copy those bits straight into the
+   1-bit layer, so the pixels are LVGL's own. Least recently used entries are dropped. */
+#define TEXT_CACHE 64
+#define TEXT_PAD 8
+typedef struct{const lv_font_t *font;char text[24];int16_t ox,oy,w,h;uint8_t *bits;uint32_t used;}baked_text;
+static baked_text text_cache[TEXT_CACHE];
+static uint32_t text_clock;
+static lv_obj_t *text_canvas;
+static uint8_t *text_render_buf;
+static baked_text *bake_text(const char *s,const lv_font_t *font){
+    size_t len=strlen(s);
+    if(len==0 || len>=sizeof text_cache[0].text || !text_canvas)return NULL;
+    baked_text *slot=&text_cache[0];
+    for(int i=0;i<TEXT_CACHE;i++){
+        baked_text *e=&text_cache[i];
+        if(e->font==font && strcmp(e->text,s)==0){e->used=++text_clock;return e;}
+        if(e->used<slot->used)slot=e;
+    }
+    int h=font->line_height+2*TEXT_PAD;
+    if(h>UI_HEIGHT)return NULL;
+    if(!text_render_buf)text_render_buf=lv_malloc(I1_PALETTE+(UI_WIDTH/8)*UI_HEIGHT);
+    if(!text_render_buf)return NULL;
+    lv_canvas_set_buffer(text_canvas,text_render_buf,UI_WIDTH,h,LV_COLOR_FORMAT_I1);
+    lv_layer_t text_layer;lv_canvas_init_layer(text_canvas,&text_layer);
+    lv_draw_rect_dsc_t bg;lv_draw_rect_dsc_init(&bg);bg.bg_color=color(true);bg.bg_opa=255;
+    lv_area_t full={0,0,UI_WIDTH-1,h-1};lv_draw_rect(&text_layer,&bg,&full);
+    lv_draw_label_dsc_t d;lv_draw_label_dsc_init(&d);
+    d.font=font;d.text=s;d.text_local=1;d.color=color(false);
+    lv_area_t area={TEXT_PAD,TEXT_PAD,UI_WIDTH-1,h-1};lv_draw_label(&text_layer,&d,&area);
+    lv_canvas_finish_layer(text_canvas,&text_layer);
+    const lv_draw_buf_t *buf=lv_canvas_get_draw_buf(text_canvas);
+    int x1=UI_WIDTH,y1=h,x2=-1,y2=-1;
+    for(int y=0;y<h;y++){
+        const uint8_t *row=lv_draw_buf_goto_xy(buf,0,(uint32_t)y);
+        for(int x=0;x<UI_WIDTH;x++)if(!(row[x>>3]>>(7-(x&7))&1)){
+            x1=LV_MIN(x1,x);x2=LV_MAX(x2,x);y1=LV_MIN(y1,y);y2=LV_MAX(y2,y);
+        }
+    }
+    lv_free(slot->bits);slot->bits=NULL;slot->font=NULL;
+    int w=x2>=x1?x2-x1+1:0,bh=y2>=y1?y2-y1+1:0,stride=(w+7)/8;
+    if(w && !(slot->bits=lv_malloc((size_t)stride*bh)))return NULL;
+    if(w)memset(slot->bits,0,(size_t)stride*bh);
+    for(int y=0;y<bh;y++){
+        const uint8_t *row=lv_draw_buf_goto_xy(buf,0,(uint32_t)(y1+y));
+        for(int x=0;x<w;x++)if(!(row[(x1+x)>>3]>>(7-((x1+x)&7))&1))slot->bits[y*stride+(x>>3)]|=(uint8_t)(0x80>>(x&7));
+    }
+    slot->font=font;memcpy(slot->text,s,len+1);
+    slot->ox=(int16_t)(x1-TEXT_PAD);slot->oy=(int16_t)(y1-TEXT_PAD);slot->w=(int16_t)w;slot->h=(int16_t)bh;
+    slot->used=++text_clock;
+    return slot;
+}
+/* Copies baked ink into a 1-bit layer within `area` (LVGL's label area) and the clip. */
+static bool blit_text(const baked_text *e,int x,int y,const lv_area_t *area,bool reverse){
+    lv_draw_buf_t *buf=layer->draw_buf;
+    if(!buf || buf->header.cf!=LV_COLOR_FORMAT_I1)return false;
+    if(!e->w)return true;
+    const lv_area_t *clip=&layer->_clip_area,b=layer->buf_area;
+    int cx1=LV_MAX(LV_MAX(clip->x1,area->x1),b.x1),cy1=LV_MAX(LV_MAX(clip->y1,area->y1),b.y1);
+    int cx2=LV_MIN(LV_MIN(clip->x2,area->x2),b.x1+(int)buf->header.w-1);
+    int cy2=LV_MIN(LV_MIN(clip->y2,area->y2),b.y1+(int)buf->header.h-1);
+    int left=x+e->ox,top=y+e->oy,stride=(e->w+7)/8;
+    int sx1=LV_MAX(cx1,left),sx2=LV_MIN(cx2,left+e->w-1),sy1=LV_MAX(cy1,top),sy2=LV_MIN(cy2,top+e->h-1);
+    if(sx1>sx2 || sy1>sy2)return true;
+    sync_layer(layer);
+    for(int yy=sy1;yy<=sy2;yy++){
+        const uint8_t *src=e->bits+(yy-top)*stride;
+        uint8_t *row=lv_draw_buf_goto_xy(buf,0,(uint32_t)(yy-b.y1));
+        for(int xx=sx1;xx<=sx2;xx++){
+            int i=xx-left;
+            if(!(src[i>>3]&(0x80>>(i&7))))continue;
+            int bx=xx-b.x1;uint8_t m=(uint8_t)(0x80>>(bx&7));
+            row[bx>>3]=reverse?(uint8_t)(row[bx>>3]|m):(uint8_t)(row[bx>>3]&~m);
+        }
+    }
+    return true;
+}
 static void dashboard_text(const char *s,int x,int y,int size,bool reverse){
+    lv_area_t area={x,y+(int)offset,UI_WIDTH-1,y+(int)offset+100};
+    const baked_text *e=layer->draw_buf && layer->draw_buf->header.cf==LV_COLOR_FORMAT_I1?bake_text(s,dashboard_font(size)):NULL;
+    if(e && blit_text(e,x,y+(int)offset,&area,reverse))return;
     lv_draw_label_dsc_t d;lv_draw_label_dsc_init(&d);
     d.font=dashboard_font(size);d.text=s;d.text_local=1;d.color=color(reverse);
     lv_area_t a={x,y+(int)offset,UI_WIDTH-1,y+(int)offset+100};lv_draw_label(layer,&d,&a);
@@ -2471,6 +2553,7 @@ void atmos_init(void){
     axis_label_canvas=lv_canvas_create(lv_screen_active());
     lv_canvas_set_buffer(axis_label_canvas,axis_label_buf,AXIS_W,AXIS_H,LV_COLOR_FORMAT_I1);
     hide_obj(axis_label_canvas);
+    text_canvas=lv_canvas_create(lv_screen_active());hide_obj(text_canvas);
     sensor=origin=target=profiles[0];count=scenario=gas_selected=climate_selected=0;scene=destination=anchor=CYCLE_FIRST;dark_parked=dark_now=lit_wait=key_detoured=false;queued=-1;pending_advance=0;hold_items=0;
     memset(alert_on,0,sizeof alert_on);for(int r=0;r<ATMOS_READINGS;r++)alert_since[r]=t;
     cycle_alerting=false;event_count=0;
