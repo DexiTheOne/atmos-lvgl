@@ -1760,11 +1760,18 @@ static void gas_line(float ax,float ay,float bx,float by,int width,bool reverse)
 /* The reference uses a single coherent S-shaped flow: two broad, pointed
    ribbons with a fine streamline between them. Motion bends that silhouette
    gently instead of translating a sine wave until its direction reverses. */
-static float gas_wave(float u){
-    float bend=.12f*sin(anim_t*UI_GAS_WAVE_SPEED);
-    float phase=u+bend*sin(TAU*u/2);
-    return UI_GAS_WAVE_AMPLITUDE*sin(TAU*phase)+2*sin(anim_t*.43f)*sin(TAU*u/2);
+/* The ribbon wave in single precision (the ESP32-S3 computes double in software):
+   the two time terms once per anim_t, then one sinf per point. arch = sin(pi*u). */
+static double gas_wave_time=NAN;static float gas_bend,gas_sway;
+static float gas_wave_at(float u,float arch){
+    if(anim_t!=gas_wave_time){
+        gas_wave_time=anim_t;
+        gas_bend=.12f*sinf((float)fmod(anim_t*UI_GAS_WAVE_SPEED,TAU));
+        gas_sway=2*sinf((float)fmod(anim_t*.43,TAU));
+    }
+    return UI_GAS_WAVE_AMPLITUDE*sinf(TAU*(u+gas_bend*arch))+gas_sway*arch;
 }
+static float gas_wave(float u){return gas_wave_at(u,sinf(TAU*u/2));}
 /* Furthest any ribbon or mote pixel reaches from content_center(). */
 #define UI_GAS_ART_EXTENT ((int)(UI_GAS_RIBBON_GAP+UI_GAS_WAVE_AMPLITUDE+UI_GAS_HALF_WIDTH+UI_GAS_WIDTH_GAIN+UI_GAS_PARTICLE_OFFSET)+6)
 static void gas_ribbons(void){
@@ -1775,14 +1782,25 @@ static void gas_ribbons(void){
     float wave[UI_GAS_RIBBON_RIGHT-UI_GAS_RIBBON_LEFT+1],taper[UI_GAS_RIBBON_RIGHT-UI_GAS_RIBBON_LEFT+1];
     float half[2]={UI_GAS_HALF_WIDTH+UI_GAS_WIDTH_GAIN*gas_intensity[0],UI_GAS_HALF_WIDTH+UI_GAS_WIDTH_GAIN*gas_intensity[1]};
     float high=INFINITY,low=-INFINITY;
+    /* sin(pi*u) and the taper depend only on the column: computed once. */
+    static float arch[UI_GAS_RIBBON_RIGHT-UI_GAS_RIBBON_LEFT+1],shape[UI_GAS_RIBBON_RIGHT-UI_GAS_RIBBON_LEFT+1];
+    static bool shaped;
+    if(!shaped){
+        shaped=true;
+        for(int x=left;x<=right;x++){
+            float u=(float)(x-left)/(right-left);
+            arch[x-left]=sinf(TAU*u/2);
+            /* Both edges meet at the tips; broad shoulders carry visual weight.
+               sin(pi) rounds slightly below zero; powf() of a negative is NaN. */
+            shape[x-left]=powf(fmaxf(0,arch[x-left]),.8f);
+        }
+    }
     for(int x=left;x<=right;x++){
         float u=(float)(x-left)/(right-left);
-        wave[x-left]=gas_wave(u);
-        /* Both edges meet at the tips; broad shoulders carry visual weight. */
-        /* sin(pi) rounds slightly below zero; pow() of a negative is NaN. */
-        taper[x-left]=pow(fmax(0,sin(TAU*u/2)),.8f);
-        high=fmin(high,wave[x-left]-half[0]*taper[x-left]);
-        low=fmax(low,wave[x-left]+half[1]*taper[x-left]);
+        wave[x-left]=gas_wave_at(u,arch[x-left]);
+        taper[x-left]=shape[x-left];
+        high=fminf(high,wave[x-left]-half[0]*taper[x-left]);
+        low=fmaxf(low,wave[x-left]+half[1]*taper[x-left]);
     }
     float ribbon_top=content_center()-UI_GAS_RIBBON_GAP-(high+low)/2;
     gas_ribbon_top=ribbon_top;
@@ -1804,16 +1822,19 @@ static void gas_ribbons(void){
        fixed clearance, so they follow the tapering silhouette, never between
        ribbons. Geometry shrinks at the ends, avoiding a visible wrap/reset. */
     for(int i=0;i<UI_GAS_PARTICLES;i++){
-        float u=fmod(anim_t*UI_GAS_PARTICLE_SPEED/(right-left)+i*.618034f,1);
+        float u=(float)fmod(anim_t*UI_GAS_PARTICLE_SPEED/(right-left)+i*.618034,1);
         float x=left+u*(right-left);
-        float r=(i%3==0?2:1)*fmin(1,8*fmin(u,1-u));
+        float r=(i%3==0?2:1)*fminf(1,8*fminf(u,1-u));
         int lower=i%2;
         /* Each ribbon carries more motes as its index rises. */
         if(r<.65f || i/2>=1+(int)round((UI_GAS_PARTICLES/2-1)*gas_intensity[lower]))continue;
-        float edge=(UI_GAS_HALF_WIDTH+UI_GAS_WIDTH_GAIN*gas_intensity[lower])*pow(fmax(0,sin(TAU*u/2)),.8f);
+        float a=sinf(TAU*u/2);
+        float edge=(UI_GAS_HALF_WIDTH+UI_GAS_WIDTH_GAIN*gas_intensity[lower])*powf(fmaxf(0,a),.8f);
         float reach=edge+UI_GAS_PARTICLE_OFFSET+r;
-        float y=ribbon_top+gas_wave(u)+(lower?2*UI_GAS_RIBBON_GAP+reach:-reach);
-        circle(x,y,(int)round(r),1,false);
+        float y=ribbon_top+gas_wave_at(u,a)+(lower?2*UI_GAS_RIBBON_GAP+reach:-reach);
+        /* A 1 px LVGL ring this small thresholds to a solid 2r square: draw that. */
+        int ri=(int)lroundf(r);
+        rect((int)lroundf(x)-ri,(int)lroundf(y)-ri,2*ri,2*ri,false,0);
     }
 }
 static void gas_chart(int key,int top){
