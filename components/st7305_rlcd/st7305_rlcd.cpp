@@ -676,7 +676,9 @@ void ST7305RLCD::transmit_(const uint8_t *data, size_t len, bool dc) {
 /* One push: address window, Memory Write, then the packed data as queued DMA
    transactions (interrupt driven: the calling task sleeps while they run). */
 void ST7305RLCD::send_window_(const Window &w) {
-  const uint8_t ca[2] = {(uint8_t) (this->col_start_ + w.u1), (uint8_t) (this->col_start_ + w.u2)};
+  // MADCTL MX=1: columns fill from the window's end address down, so buffer unit u
+  // (its order in a full-frame write) sits at col_end - u.
+  const uint8_t ca[2] = {(uint8_t) (this->col_end_ - w.u2), (uint8_t) (this->col_end_ - w.u1)};
   const uint8_t ra[2] = {(uint8_t) (this->row_start_ + w.r1), (uint8_t) (this->row_start_ + w.r2)};
   const uint8_t c2a = 0x2A, c2b = 0x2B, c2c = 0x2C;
   this->cs_->digital_write(false);
