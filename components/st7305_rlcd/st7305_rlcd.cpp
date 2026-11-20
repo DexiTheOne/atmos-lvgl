@@ -646,9 +646,15 @@ void ST7305RLCD::push_task_(void *arg) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     uint32_t start = micros();
+    uint32_t edge = self->push_edge_us_, te = self->push_te_, target = self->push_target_;
     self->send_window_(self->tx_win_);
-    self->push_start_us_ = start;
-    self->push_us_ = micros() - start;
+    // Record of the completed push (the ISR overwrites the live fields at the next one).
+    self->done_.te = te;
+    self->done_.target = target;
+    self->done_.edge_us = edge;
+    self->done_.start_us = start;
+    self->done_.us = micros() - start;
+    self->done_.bytes = self->push_bytes_;
     self->pushes_ = self->pushes_ + 1;
     self->busy_ = false;
   }
@@ -739,7 +745,11 @@ bool ST7305RLCD::present(uint32_t target_te) {
     if (this->push_task_handle_ != nullptr) {
       xTaskNotifyGive(this->push_task_handle_);
     } else {
+      uint32_t start = micros();
       this->send_window_(this->tx_win_);
+      this->done_ = {this->push_te_, this->push_target_, this->push_edge_us_, start, micros() - start,
+                     this->push_bytes_};
+      this->pushes_ = this->pushes_ + 1;
       this->busy_ = false;
     }
     return true;

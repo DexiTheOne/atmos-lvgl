@@ -514,16 +514,16 @@ uint32_t AtmosComponent::expected_us_() const {
 bool AtmosComponent::collect_push_(uint32_t &interval, uint32_t &lag, uint32_t &push, bool &late) {
   auto *p = this->panel_;
   uint32_t n = p->pushes();
-  if (n == this->seen_pushes_ || p->busy())
+  if (n == this->seen_pushes_)
     return false;
   this->seen_pushes_ = n;
-  uint32_t te = p->last_push_te(), edge = p->last_push_edge_us();
-  interval = this->last_push_te_ != 0 ? edge - this->last_push_te_ : this->expected_us_();
-  this->last_push_te_ = edge;  // micros() of the pulse (or present) it went out at
-  lag = p->last_push_start_us() - p->last_push_edge_us();
-  push = p->last_push_us();
-  late = (int32_t) (te - p->last_push_target()) > 0;
-  this->push_bytes_sum_ += p->last_push_bytes();
+  auto r = p->last_push();
+  interval = this->last_push_te_ != 0 ? r.edge_us - this->last_push_te_ : this->expected_us_();
+  this->last_push_te_ = r.edge_us;  // micros() of the pulse (or present) it went out at
+  lag = r.start_us - r.edge_us;
+  push = r.us;
+  late = (int32_t) (r.te - r.target) > 0;
+  this->push_bytes_sum_ += r.bytes;
   this->push_n_++;
   if (late)
     this->late_pushes_++;

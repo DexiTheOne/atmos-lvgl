@@ -98,13 +98,13 @@ class ST7305RLCD : public display::DisplayBuffer,
   bool present(uint32_t target_te);
   /// True while a presented frame waits for its TE pulse or is being sent.
   bool busy() const { return this->busy_; }
-  /// Last push: TE pulse it went out at, micros() of that pulse, its SPI time and bytes.
-  uint32_t last_push_te() const { return this->push_te_; }
-  uint32_t last_push_target() const { return this->push_target_; }
-  uint32_t last_push_edge_us() const { return this->push_edge_us_; }
-  uint32_t last_push_start_us() const { return this->push_start_us_; }
-  uint32_t last_push_us() const { return this->push_us_; }
-  uint32_t last_push_bytes() const { return this->push_bytes_; }
+  /// The latest completed push: TE pulse it went out at and the one it was aimed at,
+  /// micros() of that pulse and of the push's start, its SPI time and bytes.
+  struct PushRecord {
+    uint32_t te, target, edge_us, start_us, us, bytes;
+  };
+  PushRecord last_push() const { return this->done_; }
+  /// Completed pushes since setup.
   uint32_t pushes() const { return this->pushes_; }
   /// Send the whole panel buffer now and wait for it (splash, tests).
   void push_now();
@@ -155,9 +155,10 @@ class ST7305RLCD : public display::DisplayBuffer,
   bool dirty_{false};
   bool partial_{true};
   volatile bool busy_{false}, armed_{false};
-  volatile uint32_t target_te_{0}, push_te_{0}, push_target_{0}, push_edge_us_{0}, push_start_us_{0};
-  volatile uint32_t push_us_{0}, push_bytes_{0}, pushes_{0};
+  volatile uint32_t target_te_{0}, push_te_{0}, push_target_{0}, push_edge_us_{0};
+  volatile uint32_t push_bytes_{0}, pushes_{0};
   volatile int32_t te_period_q4_{0};
+  PushRecord done_{};
 
   GPIOPin *dc_pin_{nullptr};
   GPIOPin *reset_pin_{nullptr};
