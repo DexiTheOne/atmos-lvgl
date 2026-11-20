@@ -588,7 +588,12 @@ void AtmosComponent::frame_te_() {
     this->push_readings_();
 #ifdef USE_WIFI
   auto *wifi = wifi::global_wifi_component;
-  atmos_set_wifi(wifi != nullptr && wifi->is_connected() ? atmos_wifi_bars(wifi->wifi_rssi()) : -1);
+  int bars = wifi != nullptr && wifi->is_connected() ? atmos_wifi_bars(wifi->wifi_rssi()) : -1;
+  if (bars != this->last_bars_) {
+    this->last_bars_ = bars;
+    this->wifi_changes_++;
+  }
+  atmos_set_wifi(bars);
 #endif
   uint32_t work_start = micros();
   atmos_step(ticks * (double) period / 1e6);
@@ -788,6 +793,12 @@ void AtmosComponent::report_() {
   uint32_t prof[4];
   atmos_take_prof(prof);
   float secs = this->report_ms_ / 1000.0f;
+  uint32_t full[5];
+  atmos_take_full_reasons(full);
+  ESP_LOGI(TAG, "FULL redraws: moving %u  data/settings %u  pm blend %u  chart blend %u  chart rise %u  | wifi icon changes %u",
+           (unsigned) full[0], (unsigned) full[1], (unsigned) full[2], (unsigned) full[3], (unsigned) full[4],
+           (unsigned) this->wifi_changes_);
+  this->wifi_changes_ = 0;
   ESP_LOGI(TAG, "PARTS ms per second: CO2 outlines %.1f highlights %.1f | dust floor %.1f specks %.1f",
            prof[0] / 1000.0f / secs, prof[1] / 1000.0f / secs, prof[2] / 1000.0f / secs, prof[3] / 1000.0f / secs);
   ESP_LOGI(TAG, "missed model steps %u  |  heap internal free %u (min %u, largest %u)  PSRAM free %u",

@@ -109,6 +109,8 @@ class AtmosComponent : public Component {
   int rate_key_{-1};           // scene * 2 + moving, when div_ was chosen
   uint32_t cost_ema_[12]{};    // average frame work (us) per scene, still / moving
   uint32_t last_work_{0};
+  int last_bars_{-2};
+  uint32_t wifi_changes_{0};
   uint32_t wake_at_{0};       // when the next frame should start (late-frame log)
   uint32_t late_info_[3]{};   // presented frame: wake delay, pre-render scene, convert time
   uint32_t seen_pushes_{0}, last_push_te_{0}, late_pushes_{0};

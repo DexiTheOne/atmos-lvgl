@@ -245,7 +245,8 @@ static char overrun_detail[160];
 /* Optional microsecond clock from the platform, for on-device profiling. */
 static uint32_t (*clock_us)(void);
 static uint32_t compose_us_total,compose_count;
-static uint32_t prof_us[4];
+static uint32_t prof_us[4],full_reasons[5];
+void atmos_take_full_reasons(uint32_t out[5]){for(int i=0;i<5;i++){out[i]=full_reasons[i];full_reasons[i]=0;}}
 #define PROF_START uint32_t prof_t=clock_us?clock_us():0
 #define PROF_LAP(i) do{if(clock_us){uint32_t n_=clock_us();prof_us[i]+=n_-prof_t;prof_t=n_;}}while(0)
 void atmos_take_prof(uint32_t out[4]){for(int i=0;i<4;i++){out[i]=prof_us[i];prof_us[i]=0;}}
@@ -2238,6 +2239,7 @@ static void invalidate_frame(void){
     bool pm_lower=scene==2 && (pm_blend_age<UI_PM_TRANSITION_TIME || underline_age<UI_UNDERLINE_TIME);
     if(moving || full_dirty || (!pm_lower && (pm_blend_age<UI_PM_TRANSITION_TIME ||
        underline_age<UI_UNDERLINE_TIME)) || chart_blend_age<UI_CHART_BLEND_TIME || chart_rise_age<UI_CHART_BLEND_TIME){
+        full_reasons[moving?0:full_dirty?1:chart_blend_age<UI_CHART_BLEND_TIME?3:chart_rise_age<UI_CHART_BLEND_TIME?4:2]++;
         lv_obj_invalidate(surface);full_dirty=false;
     }else if(pm_lower){
         lv_area_t a=pm_lower_area();lv_obj_invalidate_area(surface,&a);
