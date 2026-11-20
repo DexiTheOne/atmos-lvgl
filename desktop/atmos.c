@@ -410,8 +410,11 @@ static baked_text *bake_text(const char *s,const lv_font_t *font){
     if(!text_render_buf)return NULL;
     lv_canvas_set_buffer(text_canvas,text_render_buf,UI_WIDTH,h,LV_COLOR_FORMAT_I1);
     lv_layer_t text_layer;lv_canvas_init_layer(text_canvas,&text_layer);
+    /* Clear and scan only as wide as the text (advance width plus generous margins). */
+    lv_point_t size;lv_text_get_size(&size,s,font,0,0,1000,LV_TEXT_FLAG_NONE);
+    int scan_w=LV_MIN(UI_WIDTH,2*TEXT_PAD+size.x+16);
     lv_draw_rect_dsc_t bg;lv_draw_rect_dsc_init(&bg);bg.bg_color=color(true);bg.bg_opa=255;
-    lv_area_t full={0,0,UI_WIDTH-1,h-1};lv_draw_rect(&text_layer,&bg,&full);
+    lv_area_t full={0,0,scan_w-1,h-1};lv_draw_rect(&text_layer,&bg,&full);
     lv_draw_label_dsc_t d;lv_draw_label_dsc_init(&d);
     d.font=font;d.text=s;d.text_local=1;d.color=color(false);
     lv_area_t area={TEXT_PAD,TEXT_PAD,UI_WIDTH-1,h-1};lv_draw_label(&text_layer,&d,&area);
@@ -420,7 +423,7 @@ static baked_text *bake_text(const char *s,const lv_font_t *font){
     int x1=UI_WIDTH,y1=h,x2=-1,y2=-1;
     for(int y=0;y<h;y++){
         const uint8_t *row=lv_draw_buf_goto_xy(buf,0,(uint32_t)y);
-        for(int x=0;x<UI_WIDTH;x++)if(!(row[x>>3]>>(7-(x&7))&1)){
+        for(int x=0;x<scan_w;x++)if(!(row[x>>3]>>(7-(x&7))&1)){
             x1=LV_MIN(x1,x);x2=LV_MAX(x2,x);y1=LV_MIN(y1,y);y2=LV_MAX(y2,y);
         }
     }
@@ -2159,33 +2162,26 @@ static void compose_ribbons(int32_t progress){
         int32_t delay=ribbon_lane_delay*LV_MIN(LV_ABS(k-1),5)/5+b*ribbon_column_step;
         half[b][k-lo+1]=(int32_t)(((int64_t)full*fx_window(progress,delay,FX*55/100))>>16);
     }
-    /* Each pixel's offset from its nearest lane k0 grows by one row (256) per y, so it
-       is tracked per column instead of divided out. A lane's half-width plus rim never
-       reaches a gap, so only k0 and the neighbour on the pixel's side can cover it:
-       inside any lane is CODE_IN, else within a rim CODE_INK, else CODE_OUT. */
-    static int32_t col_base[UI_WIDTH];static int16_t col_k0[UI_WIDTH];
-    for(int x=0;x<UI_WIDTH;x++){
-        int32_t rel=-ribbon_top-ribbon_wave[x];
-        int k=floor_div(rel+gap/2,gap);
-        col_k0[x]=(int16_t)k;col_base[x]=rel-k*gap; /* in [-gap/2, gap/2) */
-    }
-    for(int y=0;y<UI_HEIGHT;y++){
-        for(int x=0;x<UI_WIDTH;x++){
-            int32_t base=col_base[x];int k0=col_k0[x];
-            if(base+256>=gap/2){col_base[x]=base+256-gap;col_k0[x]++;}else col_base[x]=base+256;
-            const int32_t *h=half[ribbon_bucket[x]]+1-lo; /* h[k], 0 outside lo..hi */
-            int32_t h0=k0>=lo-1 && k0<=hi+1?h[k0]:0,d0=LV_ABS(base);
-            uint8_t code=CODE_OUT;
-            if(h0>0 && d0<h0)code=CODE_IN;
-            else{
-                if(h0>0 && d0<h0+rim)code=CODE_INK;
-                int kn=base>=0?k0+1:k0-1;
-                int32_t hn=kn>=lo-1 && kn<=hi+1?h[kn]:0,dn=gap-d0;
-                if(hn>0){if(dn<hn)code=CODE_IN;else if(dn<hn+rim)code=CODE_INK;}
-            }
-            row_code[x]=code;
+    /* Column spans: within lane k at column x (centre c, Q8), rows with
+       |y*256-c| < h are CODE_IN and those within h+rim CODE_INK; inside any lane
+       wins over a rim, the rest keeps the outgoing frame. A lane's half-width plus
+       rim never reaches the next lane, so every lane is a separate pair of spans:
+       start from the outgoing frame, clear all rims, then copy the incoming
+       columns inside the lanes. */
+    memcpy(transition_bits,SCENE_BITS(0),FRAME_BYTES);
+    const uint8_t *incoming=SCENE_BITS(1);
+    for(int pass=0;pass<2;pass++)for(int x=0;x<UI_WIDTH;x++){
+        const int32_t *h=half[ribbon_bucket[x]]+1-lo;
+        int xb=x>>3;uint8_t mask=(uint8_t)(0x80>>(x&7));
+        for(int k=lo;k<=hi;k++){
+            int32_t hk=h[k];
+            if(hk<=0)continue;
+            int32_t centre=ribbon_top+ribbon_wave[x]+k*gap,extent=pass?hk:hk+rim;
+            int y1=LV_MAX(floor_div(centre-extent,256)+1,0),y2=LV_MIN(-floor_div(-(centre+extent),256)-1,UI_HEIGHT-1);
+            uint8_t *o=transition_bits+y1*ROW_BYTES+xb;
+            if(pass)for(int y=y1;y<=y2;y++,o+=ROW_BYTES)*o=(uint8_t)((*o&~mask)|(incoming[o-transition_bits]&mask));
+            else for(int y=y1;y<=y2;y++,o+=ROW_BYTES)*o&=(uint8_t)~mask;
         }
-        emit_row(y);
     }
 }
 /* Climate: a droplet falls onto the humidity icon and its splash opens the page. */
