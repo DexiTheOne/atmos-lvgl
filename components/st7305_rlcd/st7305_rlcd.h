@@ -55,8 +55,8 @@ class ST7305RLCD : public display::DisplayBuffer,
   void set_width(uint16_t width) { this->width_ = width; }
   void set_height(uint16_t height) { this->height_ = height; }
   void set_orientation(ST7305Orientation orientation) { this->orientation_ = orientation; }
-  /// High-power refresh: 51 Hz (true) or 25.5 Hz (false).
-  void set_fast_refresh(bool fast) { this->fast_refresh_ = fast; }
+  /// High-power refresh in half-hertz: 32 (16 Hz), 51 (25.5), 64 (32) or 102 (51).
+  void set_refresh_hz_x2(uint8_t hz_x2) { this->refresh_hz_x2_ = hz_x2; }
 
   /// Enter sleep mode (lowest power, display blanks, RAM retained)
   void sleep();
@@ -113,7 +113,7 @@ class ST7305RLCD : public display::DisplayBuffer,
   ST7305Orientation orientation_{ST7305_ORIENTATION_LANDSCAPE};
   uint16_t width_{400};
   uint16_t height_{300};
-  bool fast_refresh_{true};
+  uint8_t refresh_hz_x2_{64};
   size_t buffer_size_{15000};
 
   // Address window parameters (panel-specific)
