@@ -494,8 +494,8 @@ void AtmosComponent::test_frame_() {
     uint32_t n = this->test_count_++;
     for (int i = 0; i < 6; i++, n /= 10)
       test_digit(f, 26 + (5 - i) * 60, 30, n % 10);
-    int span = 400 - 40, p = (int) (this->test_count_ * 4 % (2 * span));
-    test_fill(f, p < span ? p : 2 * span - p, 200, 40, 40);  // box bounces, 4 px per frame
+    // The box steps one slot per count: its slot is the counter's last digit.
+    test_fill(f, 20 + (int) ((this->test_count_ - 1) % 10) * 36, 200, 36, 40);
     uint32_t drawn = micros();
     this->panel_->load_rows_i1(f, 0, 299);
     uint32_t converted = micros();
