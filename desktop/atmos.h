@@ -158,6 +158,8 @@ int atmos_destination(void);
 int atmos_step_prerendered(void);
 /* Status LEDs. Transition progress 0..1 while moving, else -1. The reading whose
    rating a scene shows (its underlined reading; the overview's worst-rated one), or -1.
+/* Microseconds spent in the UI's draw callback since the last call (needs atmos_set_clock()). */
+uint32_t atmos_take_draw_us(void);
    The index of the band holding a reading's value in its atmos_set_bands() list and
    that band's level, or -1 when it has no rating. */
 float atmos_transition_progress(void);

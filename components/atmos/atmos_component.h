@@ -112,6 +112,11 @@ class AtmosComponent : public Component {
   uint32_t seen_pushes_{0}, last_push_te_{0}, late_pushes_{0};
   uint64_t push_bytes_sum_{0};
   uint32_t push_n_{0};
+  struct PartCost {
+    uint64_t step{0}, draw{0}, lvgl{0}, convert{0};
+    uint32_t n{0};
+  };
+  PartCost parts_[6];
   void test_frame_();
   bool display_test_{false};
   void test_draw_();

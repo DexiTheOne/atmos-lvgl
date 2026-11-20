@@ -586,6 +586,7 @@ void AtmosComponent::frame_te_() {
 #endif
   uint32_t work_start = micros();
   atmos_step(ticks * (double) period / 1e6);
+  uint32_t step_us = micros() - work_start;
   int pre = atmos_step_prerendered();
   if (pre >= 0) {
     this->pre_cost_[pre] += micros() - work_start;
@@ -593,8 +594,21 @@ void AtmosComponent::frame_te_() {
   }
   this->frame_flushed_ = false;
   this->convert_us_ = 0;
+  atmos_take_draw_us();
+  uint32_t refr_start = micros();
   lv_refr_now(this->disp_);
+  uint32_t refr_us = micros() - refr_start, draw_us = atmos_take_draw_us();
   uint32_t work = micros() - work_start;
+  if (this->frame_flushed_ && pre < 0 && !moving && !atmos_is_moving()) {
+    // Still-frame breakdown per scene: model step, our draw callback, the rest of
+    // LVGL's refresh (dispatch of queued draw tasks, overhead) and the conversion.
+    PartCost &c = this->parts_[atmos_scene() % 6];
+    c.step += step_us;
+    c.draw += draw_us;
+    c.lvgl += refr_us - std::min(refr_us, draw_us + this->convert_us_);
+    c.convert += this->convert_us_;
+    c.n++;
+  }
   if (pre < 0 && key >= 0 && key < 12) {
     uint32_t &ema = this->cost_ema_[key];
     ema = ema == 0 ? work : (uint32_t) ((int32_t) ema + ((int32_t) work - (int32_t) ema) / 8);
@@ -751,6 +765,15 @@ void AtmosComponent::report_() {
   row("still", still_cost_, still_n_);
   row("trans", trans_cost_, trans_n_);
   row("prerender", pre_cost_, pre_n_);
+  for (int s = 0; s < 6; s++) {
+    PartCost &c = this->parts_[s];
+    if (c.n == 0)
+      continue;
+    ESP_LOGI(TAG, "PARTS scene %d still: %u frames  step %.1f  draw %.1f  lvgl %.1f  convert %.1f ms", s,
+             (unsigned) c.n, c.step / 1000.0f / c.n, c.draw / 1000.0f / c.n, c.lvgl / 1000.0f / c.n,
+             c.convert / 1000.0f / c.n);
+    c = PartCost();
+  }
   ESP_LOGI(TAG, "missed model steps %u  |  heap internal free %u (min %u, largest %u)  PSRAM free %u",
            (unsigned) this->missed_steps_, (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
