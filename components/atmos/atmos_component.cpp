@@ -807,6 +807,12 @@ void AtmosComponent::report_() {
                m & 2 ? "body " : "", m & 4 ? "panel" : "", (unsigned) bn[m], bus[m] / 1000.0f / bn[m]);
   ESP_LOGI(TAG, "PARTS ms per second: CO2 outlines %.1f highlights %.1f | dust floor %.1f specks %.1f",
            prof[0] / 1000.0f / secs, prof[1] / 1000.0f / secs, prof[2] / 1000.0f / secs, prof[3] / 1000.0f / secs);
+  uint32_t cp[7];
+  atmos_take_chart_prof(cp);
+  if (cp[6] != 0)
+    ESP_LOGI(TAG, "CHART %u draws, ms each: panel %.2f  y labels %.2f  samples %.2f  columns %.2f  axes %.2f  caption %.2f",
+             (unsigned) cp[6], cp[0] / 1000.0f / cp[6], cp[1] / 1000.0f / cp[6], cp[2] / 1000.0f / cp[6],
+             cp[3] / 1000.0f / cp[6], cp[4] / 1000.0f / cp[6], cp[5] / 1000.0f / cp[6]);
   ESP_LOGI(TAG, "missed model steps %u  |  heap internal free %u (min %u, largest %u)  PSRAM free %u",
            (unsigned) this->missed_steps_, (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),

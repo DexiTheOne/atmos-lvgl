@@ -269,6 +269,11 @@ void atmos_take_band_cost(uint32_t us[8],uint32_t n[8]){for(int i=0;i<8;i++){us[
 void atmos_take_full_reasons(uint32_t out[5]){for(int i=0;i<5;i++){out[i]=full_reasons[i];full_reasons[i]=0;}}
 #define PROF_START uint32_t prof_t=clock_us?clock_us():0
 #define PROF_LAP(i) do{if(clock_us){uint32_t n_=clock_us();prof_us[i]+=n_-prof_t;prof_t=n_;}}while(0)
+/* History chart parts (atmos_take_chart_prof()): 0 panel, 1 y labels, 2 samples and
+   interpolation, 3 column writes, 4 axes and x labels, 5 caption; 6 counts charts drawn. */
+static uint32_t chart_prof[7];static void sync_layer(lv_layer_t *target);
+#define CHART_SYNC_LAP(i) do{if(clock_us){sync_layer(layer);uint32_t n_=clock_us();chart_prof[i]+=n_-prof_t;prof_t=n_;}}while(0)
+void atmos_take_chart_prof(uint32_t out[7]){for(int i=0;i<7;i++){out[i]=chart_prof[i];chart_prof[i]=0;}}
 void atmos_take_prof(uint32_t out[4]){for(int i=0;i<4;i++){out[i]=prof_us[i];prof_us[i]=0;}}
 /* Run any LVGL draw tasks still queued for a layer, so direct writes land on top
    of everything drawn before them. */
@@ -1099,8 +1104,10 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
     if(!band_hit(BAND_PANEL))return;
     bool blend=!weights && chart_blend_age<UI_CHART_BLEND_TIME && key==chart_to_key && chart_from_key>=0;
     float q=ease(chart_blend_age/UI_CHART_BLEND_TIME),rise=ease(chart_rise_age/UI_CHART_BLEND_TIME);
+    PROF_START;chart_prof[6]++;
     history_panel();
     chart_geometry();
+    CHART_SYNC_LAP(0);
     /* The scale labels count from the previous reading's scale to the new one, as the
        Particles scale does; the ticks stay put. */
     float label_low=blend?mix(label_from_low,low,q):low,label_high=blend?mix(label_from_high,high,q):high;
@@ -1108,6 +1115,7 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
         float fraction=(float)i/UI_CHART_Y_INTERVALS;
         chart_tick(mix(label_low,label_high,fraction),mix(chart_bottom,UI_CHART_TOP,fraction));
     }
+    CHART_SYNC_LAP(1);
     /* A reading with a start-up delay (the SEN6x) has no history before its sensor
        reports: the chart and its span start at its first valid sample, so the chart
        stays empty at "LAST 0 SEC" until the sensor is ready. */
@@ -1119,7 +1127,7 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
        newest sample, interpolating into the one sample kept from before it. */
     if(last-first>history_window)first=last-history_window;
     double span=last-first;
-    if(!n){chart_axes(name,unit,span);history_caption(span);return;}
+    if(!n){chart_axes(name,unit,span);history_caption(span);CHART_SYNC_LAP(4);return;}
     /* A single sample spans the full width as a flat trace, so the chart does
        not start as one column and then jump to full width at the second. */
     float previous=NAN,trace[UI_CHART_RIGHT+1],values[HISTORY_CAP],from_values[HISTORY_CAP];
@@ -1143,6 +1151,7 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
         }
         trace[x-chart_left]=valid?mix(chart_bottom,y,rise):NAN;
     }
+    CHART_SYNC_LAP(2);
     column_writer w={0};bool direct=column_writer_init(&w);
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
         float y=trace[x-chart_left];
@@ -1160,8 +1169,11 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
         }
         previous=y;
     }
+    CHART_SYNC_LAP(3);
     chart_axes(name,unit,span);
+    CHART_SYNC_LAP(4);
     history_caption(span);
+    CHART_SYNC_LAP(5);
 }
 /* Highest reading each sensor can report; chart scales never pass it. */
 static float field_limit(int key){
