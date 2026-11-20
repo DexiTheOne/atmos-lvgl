@@ -774,6 +774,11 @@ void AtmosComponent::report_() {
              c.convert / 1000.0f / c.n);
     c = PartCost();
   }
+  uint32_t prof[4];
+  atmos_take_prof(prof);
+  float secs = this->report_ms_ / 1000.0f;
+  ESP_LOGI(TAG, "PARTS ms per second: CO2 outlines %.1f highlights %.1f | dust floor %.1f specks %.1f",
+           prof[0] / 1000.0f / secs, prof[1] / 1000.0f / secs, prof[2] / 1000.0f / secs, prof[3] / 1000.0f / secs);
   ESP_LOGI(TAG, "missed model steps %u  |  heap internal free %u (min %u, largest %u)  PSRAM free %u",
            (unsigned) this->missed_steps_, (unsigned) heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),

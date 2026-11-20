@@ -245,6 +245,10 @@ static char overrun_detail[160];
 /* Optional microsecond clock from the platform, for on-device profiling. */
 static uint32_t (*clock_us)(void);
 static uint32_t compose_us_total,compose_count;
+static uint32_t prof_us[4];
+#define PROF_START uint32_t prof_t=clock_us?clock_us():0
+#define PROF_LAP(i) do{if(clock_us){uint32_t n_=clock_us();prof_us[i]+=n_-prof_t;prof_t=n_;}}while(0)
+void atmos_take_prof(uint32_t out[4]){for(int i=0;i<4;i++){out[i]=prof_us[i];prof_us[i]=0;}}
 /* Run any LVGL draw tasks still queued for a layer, so direct writes land on top
    of everything drawn before them. */
 static void sync_layer(lv_layer_t *target){
@@ -762,13 +766,16 @@ static void co2_live_bubbles(void){
         float x,y;co2_bubble_position(j,&x,&y);int base=co2_bubble_radius(j);
         int r=(int)floor(fmin(base,fmin(UI_BUBBLE_BOTTOM-y,y-UI_BUBBLE_TOP)));
         if(r<2)continue;
+        PROF_START;
         circle(x,y,r,UI_BUBBLE_STROKE,false);
+        PROF_LAP(0);
         if(r>=11){
             lv_draw_arc_dsc_t d;lv_draw_arc_dsc_init(&d);
             d.center=(lv_point_t){(int)round(x),(int)round(y)};d.radius=r-5;
             d.width=2;d.start_angle=205;d.end_angle=255;d.color=color(false);d.rounded=1;
             lv_draw_arc(layer,&d);
         }
+        PROF_LAP(1);
     }
     layer->_clip_area=clip;
 }
@@ -1166,7 +1173,9 @@ static int pm_dust_left(void){
 }
 static void pm_particle_field(void){
     if(pm_grid_count<0)pm_grid_build();
+    PROF_START;
     for(int i=0;i<pm_grid_count;i++)rect(pm_grid_dots[i][0],pm_grid_dots[i][1],1,1,false,0);
+    PROF_LAP(2);
     /* Each size class is weighted by its own channel's reading (PM1, PM2.5, PM4,
        PM10), so the field always shows a mix of sizes in the readings'
        proportions; the overall level sets only the density. Band differences
@@ -1210,6 +1219,7 @@ static void pm_particle_field(void){
         pm_dust[pm_dust_count][0]=(int16_t)sx;pm_dust[pm_dust_count][1]=(int16_t)sy;
         pm_dust[pm_dust_count++][2]=(int16_t)lroundf(r);
     }
+    PROF_LAP(3);
 }
 static void pm_history_chart(void){
     bool blending=pm_blend_age<UI_PM_TRANSITION_TIME;

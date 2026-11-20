@@ -155,6 +155,8 @@ void atmos_set_clock(uint32_t (*us)(void));
 float atmos_compose_ms(void);
 /* Microseconds spent in the UI's draw callback since the last call (needs atmos_set_clock()). */
 uint32_t atmos_take_draw_us(void);
+/* Profiling slots (us since the last call): 0 CO2 outlines, 1 CO2 highlights, 2 dust floor, 3 dust specks. */
+void atmos_take_prof(uint32_t out[4]);
 int atmos_destination(void);
 /* Scene rasterised by a hold-time pre-render during the latest atmos_step(), or -1. */
 int atmos_step_prerendered(void);
