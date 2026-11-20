@@ -52,6 +52,13 @@ void FrameStats::log(const char *name, uint32_t period) const {
 }
 
 void AtmosComponent::setup() {
+  if (this->display_test_) {
+    ESP_LOGW(TAG, "Display test: UI disabled, target period %u us", (unsigned) this->period_us_);
+    this->last_report_ms_ = millis();
+    this->next_step_us_ = micros();
+    this->set_timeout("frame", 0, [this]() { this->test_frame_(); });
+    return;
+  }
   lv_init();
   lv_tick_set_cb([]() -> uint32_t { return millis(); });
   this->disp_ = lv_display_create(400, 300);
@@ -454,6 +461,60 @@ void AtmosComponent::frame_() {
   this->busy_us_ += done - now;
   int32_t wait = (int32_t) (this->next_step_us_ - done);
   this->set_timeout("frame", wait > 0 ? (wait + 999) / 1000 : 0, [this]() { this->frame_(); });
+}
+
+/* Display test: ink = cleared bit. Seven-segment digits, so no fonts or LVGL. */
+static void test_fill(uint8_t *f, int x0, int y0, int w, int h) {
+  for (int y = std::max(y0, 0); y < std::min(y0 + h, 300); y++)
+    for (int x = std::max(x0, 0); x < std::min(x0 + w, 400); x++)
+      f[y * 50 + x / 8] &= ~(0x80 >> (x & 7));
+}
+
+static void test_digit(uint8_t *f, int x, int y, int d) {
+  static const uint8_t seg[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
+  const int w = 48, h = 96, t = 10;
+  uint8_t s = seg[d];
+  if (s & 0x01) test_fill(f, x, y, w, t);                  // a
+  if (s & 0x02) test_fill(f, x + w - t, y, t, h / 2);      // b
+  if (s & 0x04) test_fill(f, x + w - t, y + h / 2, t, h / 2);  // c
+  if (s & 0x08) test_fill(f, x, y + h - t, w, t);          // d
+  if (s & 0x10) test_fill(f, x, y + h / 2, t, h / 2);      // e
+  if (s & 0x20) test_fill(f, x, y, t, h / 2);              // f
+  if (s & 0x40) test_fill(f, x, y + (h - t) / 2, w, t);    // g
+}
+
+void AtmosComponent::test_frame_() {
+  uint8_t *f = frame_buf + 8;
+  uint32_t now = micros();
+  if ((int32_t) (now - this->next_step_us_) >= 0) {
+    uint32_t late = now - this->next_step_us_;
+    this->next_step_us_ += (1 + late / this->period_us_) * this->period_us_;
+    uint32_t start = micros();
+    memset(f, 0xFF, 400 / 8 * 300);
+    uint32_t n = this->test_count_++;
+    for (int i = 0; i < 6; i++, n /= 10)
+      test_digit(f, 26 + (5 - i) * 60, 30, n % 10);
+    int span = 400 - 40, p = (int) (this->test_count_ * 4 % (2 * span));
+    test_fill(f, p < span ? p : 2 * span - p, 200, 40, 40);  // box bounces, 4 px per frame
+    uint32_t drawn = micros();
+    this->panel_->load_rows_i1(f, 0, 299);
+    uint32_t converted = micros();
+    this->panel_->push_buffer();
+    uint32_t pushed = micros();
+    uint32_t interval = this->last_present_ ? pushed - this->last_present_ : this->period_us_;
+    this->last_present_ = pushed;
+    this->test_stats_.add(interval, drawn - start, converted - drawn, pushed - converted, this->period_us_);
+    this->busy_us_ += pushed - now;
+  }
+  if (millis() - this->last_report_ms_ >= this->report_ms_) {
+    this->test_stats_.log("disp test", this->period_us_);
+    ESP_LOGI(TAG, "disp test  busy %.0f%% of CPU", this->busy_us_ / 10.0f / (millis() - this->last_report_ms_));
+    this->last_report_ms_ = millis();
+    this->test_stats_ = FrameStats();
+    this->busy_us_ = 0;
+  }
+  int32_t wait = (int32_t) (this->next_step_us_ - micros());
+  this->set_timeout("frame", wait > 0 ? (wait + 999) / 1000 : 0, [this]() { this->test_frame_(); });
 }
 
 void AtmosComponent::report_() {

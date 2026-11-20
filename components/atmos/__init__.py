@@ -35,6 +35,7 @@ CONF_DISPLAY_ID = "display_id"
 CONF_FRAME_PERIOD = "frame_period"
 CONF_REPORT_INTERVAL = "report_interval"
 CONF_FRAME_STATS = "frame_stats"
+CONF_DISPLAY_TEST = "display_test"
 CONF_KEY_INTERVAL = "key_interval"
 CONF_SPLASH_NAME = "splash_name"
 CONF_SPLASH_SUBTITLE = "splash_subtitle"
@@ -213,6 +214,9 @@ CONFIG_SCHEMA = cv.Schema(
         # Debug: log fps, frame times, CPU share, heap and the PROFILE lines (used by
         # bench.ps1 and the simulator's --hw-pace) every report_interval.
         cv.Optional(CONF_FRAME_STATS, default=False): cv.boolean,
+        # Panel speed test: no UI; a counter and a moving box drawn straight into the
+        # frame every frame_period, logged every report_interval.
+        cv.Optional(CONF_DISPLAY_TEST, default=False): cv.boolean,
         # Minimum time between accepted atmos.next/atmos.previous presses.
         # Boot splash: this name over a "Made for ESPHome" badge, held until a Home
         # Assistant client connects (or the network, without the API), at most this long.
@@ -312,6 +316,7 @@ async def to_code(config):
     cg.add(var.set_frame_period_us(config[CONF_FRAME_PERIOD].total_microseconds))
     cg.add(var.set_report_interval_ms(config[CONF_REPORT_INTERVAL].total_milliseconds))
     cg.add(var.set_frame_stats(config[CONF_FRAME_STATS]))
+    cg.add(var.set_display_test(config[CONF_DISPLAY_TEST]))
     cg.add(var.set_key_interval_ms(config[CONF_KEY_INTERVAL].total_milliseconds))
     cg.add(var.set_splash_name(config[CONF_SPLASH_NAME]))
     cg.add(var.set_splash_subtitle(config[CONF_SPLASH_SUBTITLE]))

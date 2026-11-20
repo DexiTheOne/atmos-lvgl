@@ -41,6 +41,9 @@ class AtmosComponent : public Component {
   void set_frame_period_us(uint32_t us) { this->period_us_ = us; }
   void set_report_interval_ms(uint32_t ms) { this->report_ms_ = ms; }
   void set_frame_stats(bool on) { this->frame_stats_ = on; }
+  /* Display test: skip the UI and LVGL; draw a counter and a moving box straight into
+     the 1-bit frame at frame_period, to measure the panel path (convert + SPI push). */
+  void set_display_test(bool on) { this->display_test_ = on; }
   void set_key_interval_ms(uint32_t ms) { this->key_interval_ms_ = ms; }
   void set_splash_name(const char *name) { this->splash_name_ = name; }
   void set_splash_subtitle(const char *text) { this->splash_subtitle_ = text; }
@@ -90,6 +93,10 @@ class AtmosComponent : public Component {
   void wait_ready_();
   bool ready_() const;
   void report_();
+  void test_frame_();
+  bool display_test_{false};
+  uint32_t test_count_{0};
+  FrameStats test_stats_;
 
   st7305_rlcd::ST7305RLCD *panel_{nullptr};
   lv_display_t *disp_{nullptr};
