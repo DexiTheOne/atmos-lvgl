@@ -483,6 +483,13 @@ static void test_digit(uint8_t *f, int x, int y, int d) {
   if (s & 0x40) test_fill(f, x, y + (h - t) / 2, w, t);    // g
 }
 
+/* Inverts a rectangle, so the tear bar stays visible over the counter and box. */
+static void test_invert(uint8_t *f, int x0, int y0, int w, int h) {
+  for (int y = std::max(y0, 0); y < std::min(y0 + h, 300); y++)
+    for (int x = std::max(x0, 0); x < std::min(x0 + w, 400); x++)
+      f[y * 50 + x / 8] ^= 0x80 >> (x & 7);
+}
+
 void AtmosComponent::test_frame_() {
   uint8_t *f = frame_buf + 8;
   uint32_t now = micros();
@@ -496,6 +503,9 @@ void AtmosComponent::test_frame_() {
       test_digit(f, 26 + (5 - i) * 60, 30, n % 10);
     // The box steps one slot per count: its slot is the counter's last digit.
     test_fill(f, 20 + (int) ((this->test_count_ - 1) % 10) * 36, 200, 36, 40);
+    // Tearing: a full-height bar sweeps 16 px per frame; a frame caught mid-scan
+    // shows it stepped sideways at the scan row.
+    test_invert(f, (int) ((this->test_count_ - 1) * 16 % 400), 0, 24, 300);
     uint32_t drawn = micros();
     this->panel_->load_rows_i1(f, 0, 299);
     uint32_t converted = micros();
