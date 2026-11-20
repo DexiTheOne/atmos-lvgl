@@ -209,7 +209,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(AtmosComponent),
         cv.Required(CONF_DISPLAY_ID): cv.use_id(ST7305RLCD),
         # Frame period and frame-rate cap: 59 ms = about 17 fps, which nearly every frame meets,
-        # leaving about a quarter of the CPU idle for Wi-Fi, the API and sensors.
+        # leaving about a quarter of the CPU idle for Wi-Fi, the API and sensors. With the
+        # display's te_pin it is rounded to whole panel refreshes (29 ms: every refresh for
+        # scenes whose frames fit, the rest every second).
         cv.Optional(CONF_FRAME_PERIOD, default="59ms"): cv.positive_time_period_microseconds,
         # Debug: log fps, frame times, CPU share, heap and the PROFILE lines (used by
         # bench.ps1 and the simulator's --hw-pace) every report_interval.

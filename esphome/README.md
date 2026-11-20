@@ -304,6 +304,26 @@ The component no longer spins the main loop (`HighFrequencyLoopRequester` is gon
 - At 17 fps (the default) only pre-render steps run over, and about a third to two-fifths of the CPU is left.
 - `--hw-pace` in the simulator now holds every frame for at least 59 ms.
 
+## Results: 2026-11-20, panel refresh, TE sync, DMA and partial pushes
+
+Real panel (`atmos`, over OTA), with Wi-Fi, the API and sensors running.
+
+**Panel refresh.** A display test (`display_test: true`: a counter, a box stepping one slot per count, a sweeping full-height bar and full-page inversions, filmed at 240 fps) showed frames skipping above about 25 fps. The ST7305 refreshes on its own clock, and the Waveshare init (FRCTRL B2h = 0x02, OSCSET D8h = 0x80) selects **25.5 Hz**. The datasheet (v0.2) offers 16, 25.5, 32 and 51 Hz in high-power mode. 51 Hz flickered visibly and turned black text grey (the drive settings are tuned for the slower rate); **32 Hz** (`refresh_rate`, now the default) looks as before and measures **34.2 Hz (29.2 ms)** from TE.
+
+**TE sync.** The panel's tearing-effect output is on GPIO6 (`te_pin`). Pushing each frame at TE's rising edge (start of the blank) showed no tearing on camera, even with full-page inversions; the refresh is visible sweeping left to right. Pushes start within about 0.05 ms of the pulse on average (1 ms at most).
+
+**UI with TE pacing** (`frame_period: 29ms`, partial pushes, DMA), 10 s windows:
+
+| | Frame intervals | Late | Render (work) | Push |
+|---|---|---|---|---|
+| Transitions | 58.4 ms (17.1â€“17.8 fps), exact multiples of 29.2 ms | 0â€“4 per transition run | 19â€“44 ms avg | 3.6â€“3.8 ms |
+| Still scenes | 66â€“76 ms avg (13â€“15 fps) | 20â€“40 of about 140 | 37â€“42 ms avg, max 60â€“120 | 1.3â€“1.5 ms |
+
+- Every frame interval is a whole number of refreshes: frames are no longer drawn mid-refresh, and none are lost between refreshes.
+- Partial pushes send 3.2â€“5 KB on average instead of 15 KB.
+- No scene's frames fit in one refresh yet (PROFILE still 31â€“48 ms), so everything runs every second refresh; still scenes at 37â€“42 ms of work plus housekeeping miss the 58 ms slot on a fifth to a third of frames, then show for three refreshes. Rendering speed is the next limit.
+- UI busy 65â€“68 % of the CPU.
+
 ## Status LEDs (atmos_led)
 
 `atmos_led` colours an addressable LED strip with the rating on screen. Configure the

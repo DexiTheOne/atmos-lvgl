@@ -85,12 +85,12 @@ display:
   - platform: st7305_rlcd
     id: panel
     model: WAVESHARE_400X300
-    # 40 MHz: reported working on this panel by a community build (artefacts near
-    # 60 MHz); not yet verified on our panel. The driver default is 10 MHz.
+    # 40 MHz: verified clean on this panel (2026-10-30). The driver default is 10 MHz.
     data_rate: 40MHz
     cs_pin: GPIO40
     dc_pin: GPIO5
     reset_pin: GPIO41
+    te_pin: GPIO6  # frames at the panel's blank
     auto_clear_enabled: false
     update_interval: never
 

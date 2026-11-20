@@ -57,12 +57,16 @@ display:
     cs_pin: GPIO40
     dc_pin: GPIO5
     reset_pin: GPIO41
+    te_pin: GPIO6  # tearing effect: frames are sent at the panel's blank, never torn
+    refresh_rate: 32Hz  # panel refresh (16, 25.5, 32, 51 Hz); 51 Hz flickers
     auto_clear_enabled: false
     update_interval: never
 
 atmos:
   display_id: panel
-  frame_period: 59ms  # frame-rate cap, about 17 fps
+  # Frame-rate cap, rounded to whole panel refreshes (34.2 Hz measured): 29ms lets
+  # scenes whose frames fit run every refresh, the rest every second (17 fps).
+  frame_period: 29ms
   key_interval: 250ms  # presses closer together than this are ignored
 
   # Debug: log fps, frame times, CPU share and heap every report_interval.
