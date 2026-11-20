@@ -384,7 +384,7 @@ static int text_width(const char *s,const lv_font_t *font){
     lv_point_t size;lv_text_get_size(&size,s,font,0,0,1000,LV_TEXT_FLAG_NONE);return size.x;
 }
 /* Header strings are ASCII. Center their visible ink, not their line boxes. */
-static lv_area_t header_ink_bounds(const char *text,const lv_font_t *font){
+static lv_area_t scan_ink_bounds(const char *text,const lv_font_t *font){
     lv_area_t bounds={1000,1000,-1000,-1000};
     int pen=0;
     for(const char *c=text;*c;c++){
@@ -459,6 +459,26 @@ static void wifi_icon(void){
     }
 }
 static int ink_width(const char *text,int size);
+/* Ink bounds depend only on the font and the string, and scanning every glyph's bits
+   is costly for the large fonts (layout measures canonical digit strings each draw):
+   remember them. Strings longer than the key are measured each time. */
+#define INK_CACHE 128
+static struct{const lv_font_t *font;char text[24];lv_area_t bounds;}ink_cache[INK_CACHE];
+static lv_area_t header_ink_bounds(const char *text,const lv_font_t *font){
+    size_t len=strlen(text);
+    if(len>=sizeof ink_cache[0].text)return scan_ink_bounds(text,font);
+    uint32_t h=2166136261u^(uint32_t)(uintptr_t)font;
+    for(const char *s=text;*s;s++)h=(h^(uint8_t)*s)*16777619u;
+    for(int probe=0;probe<8;probe++){
+        int i=(int)((h+(uint32_t)probe)%INK_CACHE);
+        if(ink_cache[i].font==font && strcmp(ink_cache[i].text,text)==0)return ink_cache[i].bounds;
+        if(!ink_cache[i].font || probe==7){
+            ink_cache[i].font=font;memcpy(ink_cache[i].text,text,len+1);
+            ink_cache[i].bounds=scan_ink_bounds(text,font);return ink_cache[i].bounds;
+        }
+    }
+    return scan_ink_bounds(text,font);
+}
 static void detail_header(const char *title,const char *badge){
     if(!band_hit(BAND_HEADER))return;
     /* Titles are capitals: centre the cap height, so a tail (the Q in
@@ -524,7 +544,16 @@ static void format_reading(char *out,size_t capacity,float value,int decimals,bo
 }
 /* Ink width of the widest number with `digits` digits (and a decimal point
    when `point`), so fixed layouts fit any reading up to the sensor maximum. */
+static int widest_decimal_measure(int digits,int decimals,int size);
+/* Fonts are fixed, so each (digits, decimals, size) is measured once. */
 static int widest_decimal(int digits,int decimals,int size){
+    static struct{int digits,decimals,size,width;}memo[32];static int used;
+    for(int i=0;i<used;i++)if(memo[i].digits==digits && memo[i].decimals==decimals && memo[i].size==size)return memo[i].width;
+    int w=widest_decimal_measure(digits,decimals,size);
+    if(used<32)memo[used++]=(typeof(memo[0])){digits,decimals,size,w};
+    return w;
+}
+static int widest_decimal_measure(int digits,int decimals,int size){
     char widest='0';int best=-1;
     for(char d='0';d<='9';d++){char s[2]={d,0};int w=text_width(s,dashboard_font(size));if(w>best){best=w;widest=d;}}
     char s[16];int n=0;
