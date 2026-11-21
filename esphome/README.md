@@ -364,6 +364,16 @@ Before the retarget fix every push was one refresh late (342 of 342 per 10 s): o
 each later frame starting at a pulse its predecessor's push still waited for. Transition frames
 often exceed one refresh (render plus wake delay over 29.2 ms), so transitions mix 34 and 17 fps.
 
+Pipelined (b110027): each frame starts one refresh before its predecessor's target, rendering
+while that frame waits for its refresh, so it has almost two refreshes. Four minutes on atmos:
+
+| | fps | Interval avg | Late (>43.8 ms) per 10 s | Render avg | Late pushes |
+|---|---|---|---|---|---|
+| Still pages | 34.1–34.2 | 29.2–29.3 ms | 0–1 | 4.0–8.5 ms | 0 |
+| Transitions | 32.8–34.2 | 29.2–30.4 ms | 0–2 per transition | 16–24 ms (max 28.7) | 0 |
+
+UI busy 18–38 % of CPU.
+
 ## Status LEDs (atmos_led)
 
 `atmos_led` colours an addressable LED strip with the rating on screen. Configure the
