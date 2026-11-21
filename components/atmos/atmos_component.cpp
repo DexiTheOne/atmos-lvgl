@@ -651,8 +651,11 @@ void AtmosComponent::frame_te_() {
              atmos_scene(), (int) atmos_is_moving());
   this->finish_frame_();
   this->busy_us_ += micros() - now;
-  // Next frame from this one's target pulse.
-  int32_t wait = (int32_t) (p->te_time_us() + (int32_t) (target - p->te_count()) * (int32_t) period - micros());
+  // Next frame from the pulse before this one's target: it renders while this frame
+  // waits for its refresh (present() has already packed it), so a frame has almost two
+  // refreshes from its start, and at most one frame starts per refresh. If it finishes
+  // while this push is still queued, it waits as pending_ and goes out at its own target.
+  int32_t wait = (int32_t) (p->te_time_us() + ((int32_t) (target - p->te_count()) - 1) * (int32_t) period - micros());
   if (this->pending_)
     wait = 1000;
   else
