@@ -1,4 +1,4 @@
-﻿#include "atmos.h"
+#include "atmos.h"
 #if LVGL_VERSION_MAJOR!=9
 #error "atmos requires LVGL 9.x"
 #endif
@@ -45,6 +45,11 @@ static int gas_selected,climate_selected;
 static void select_gas(int lane);
 static void select_climate(int row);
 static int pending_advance;
+/* Set while a waiting key press starts a page change with more presses behind it. */
+static bool hurry;
+#define UI_HURRY_SCALE 0.5f
+static bool selection_blending(void);
+static void drain_advances(void);
 static int gas_divider_x=UI_GAS_DIVIDER_X; /* Set by draw_gas_detail() for hit-testing. */
 static double changed, next_sample, age, movement;
 /* Time the scene artwork is drawn at: t for live frames; a transition snapshots the
@@ -999,6 +1004,18 @@ static void chart_geometry(void){
     chart_left=UI_MARGIN+widest_number(4,false,UI_FONT_AXIS)+UI_CHART_TICK_LENGTH+UI_CHART_LABEL_GAP+1;
     chart_bottom=UI_CHART_BOTTOM+grow;chart_tick_y=UI_CHART_TICK_Y+grow;
 }
+/* The chart's right edge runs with the clock in whole-pixel steps, so the trace
+   scrolls left a pixel at a time instead of a sample's width at each sample. It is
+   a function of the drawing time (anim_t), so snapshots and band redraws agree;
+   atmos_step() redraws the panel when the step changes. */
+static double chart_pixel_time(void){
+    chart_geometry();
+    return (double)history_window/(double)LV_MAX(1,UI_CHART_RIGHT-chart_left);
+}
+static double chart_head_time(double last,double now){
+    double px=chart_pixel_time(),k=floor((now-last)/px);
+    return last+(k>0?k*px:0);
+}
 static void history_panel(void){
     if(!band_hit(BAND_PANEL))return;
     rect(0,UI_HISTORY_PANEL_Y,UI_WIDTH,UI_HEIGHT-UI_HISTORY_PANEL_Y,false,0);
@@ -1173,7 +1190,7 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
     if(startup_delay[key])
         while(n && !chart_valid(chart_sample(samples[0].value,key,weights),key) &&
               !(blend && chart_valid(field(samples[0].value,chart_from_key),chart_from_key))){samples++;n--;}
-    double first=n?samples[0].at:0,last=n?samples[n-1].at:0;
+    double first=n?samples[0].at:0,last=n?chart_head_time(samples[n-1].at,anim_t):0;
     /* Once the history span is held, the chart shows exactly that span up to the
        newest sample, interpolating into the one sample kept from before it. */
     if(last-first>history_window)first=last-history_window;
@@ -1183,13 +1200,21 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
        not start as one column and then jump to full width at the second. */
     /* Static, not on the stack: the device's loop task overflowed with them there
        (about 2.4 KB on top of LVGL's draw call chain). The UI runs on one task. */
-    static float trace[UI_CHART_RIGHT+1],values[HISTORY_CAP],from_values[HISTORY_CAP],times[HISTORY_CAP];
+    static float trace[UI_CHART_RIGHT+1],values[HISTORY_CAP+1],from_values[HISTORY_CAP+1],times[HISTORY_CAP+1];
     float previous=NAN;
     if(n>HISTORY_CAP)n=HISTORY_CAP;
     for(int i=0;i<n;i++){
         times[i]=(float)(samples[i].at-first);
         values[i]=chart_sample(samples[i].value,key,weights);
         if(blend)from_values[i]=chart_sample(samples[i].value,chart_from_key,NULL);
+    }
+    /* Past the newest sample the trace runs on to the current reading at the
+       chart's edge, which the next sample then takes. */
+    if(last>samples[n-1].at){
+        times[n]=(float)(last-first);
+        values[n]=chart_sample(sensor,key,weights);
+        if(blend)from_values[n]=chart_sample(sensor,chart_from_key,NULL);
+        n++;
     }
     int begin=chart_left,cursor=1,from_cursor=1;
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
@@ -2868,6 +2893,12 @@ void atmos_step(double dt){
     bool chart_blending=pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME;
     if(t+1e-7f>=next_sample && !chart_blending){take_sample();next_sample=fmax(next_sample+sample_every(),t);}
     prune_history();
+    /* The chart scrolls a pixel at a time between samples (chart_head_time()). */
+    if(count){
+        static double head=-1;
+        double h=chart_head_time(history[count-1].at,t);
+        if(h!=head){head=h;if(scene!=0 && !moving)dirty_bands|=BAND_PANEL;}
+    }
     update_alerts();
     if(moving){
         movement+=dt;
@@ -2877,9 +2908,7 @@ void atmos_step(double dt){
             /* Reset the next page now, before its snapshot is pre-rendered, so
                automatic cycling arrives on its first reading. */
             if(automatic)prepare_next(auto_next(scene));
-            if(queued>=0){int requested=queued;queued=-1;atmos_set_scene(requested);}
-            /* Key presses made during the transition now step the arrived page. */
-            else while(pending_advance && !moving){int d=pending_advance>0?1:-1;pending_advance-=d;atmos_advance(d);}}
+            if(queued>=0){int requested=queued;queued=-1;atmos_set_scene(requested);}}
     }else{age+=dt;
         if(automatic){
             /* Split the hold evenly between this hold's items, stepping forward only. */
@@ -2912,6 +2941,8 @@ void atmos_step(double dt){
             if(to==scene){start_hold();auto_select(scene,lowest_item(hold_items));}
             else{if(to==0)dark_parked=true;prepare_next(to);atmos_set_scene(to);}
         }}
+    /* Key presses held back by a transition or blend now step the display. */
+    if(!moving && pending_advance && !selection_blending())drain_advances();
     invalidate_frame();
 }
 void atmos_set_scene(int requested){
@@ -2924,7 +2955,7 @@ void atmos_set_scene(int requested){
         underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
         data_version++;
     }
-    duration=transition_duration(scene,requested);
+    duration=transition_duration(scene,requested)*(hurry?UI_HURRY_SCALE:1);
     /* Use the hold-time snapshots when they match; the transition clock then starts
        at their time so the end still meets the live scene exactly. */
     bool ready=pre_stage==PRE_DONE && pre_from==scene && pre_to==requested && pre_version==data_version && pre_start<=t+1e-4;
@@ -2936,10 +2967,7 @@ void atmos_set_scene(int requested){
    move to the neighbouring page past its last (or before its first) reading. The
    page is entered on its first reading going forward, its last going back. Each
    press restarts the hold, so automatic cycling gives the reader a full hold. */
-void atmos_advance(int direction){
-    direction=direction<0?-1:1;
-    /* A press during a transition waits for the arriving page rather than skipping it. */
-    if(moving){pending_advance+=direction;return;}
+static void advance_now(int direction){
     int item=auto_selected(scene)+direction;
     if(scene!=0 && item>=0 && item<auto_items(scene)){auto_select(scene,item);age=0;return;}
     /* Forward, every page's last reading leads to the overview, and the overview to
@@ -2949,6 +2977,28 @@ void atmos_advance(int direction){
     if(to==0)key_detoured=true;
     if(to!=scene)auto_select(to,direction>0?0:auto_items(to)-1);
     age=0;atmos_set_scene(to);
+}
+/* Presses never cut an animation: a press during a transition or a selection
+   blend waits for it to finish. Waiting presses then play out coalesced: reading
+   steps with more presses behind them switch at once, and a page change with more
+   behind it runs at hurry speed, so the display catches up quickly. */
+static bool selection_blending(void){
+    return underline_age<UI_UNDERLINE_TIME || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME;
+}
+static void drain_advances(void){
+    while(pending_advance && !moving){
+        int d=pending_advance>0?1:-1;pending_advance-=d;
+        hurry=pending_advance!=0;advance_now(d);hurry=false;
+        if(pending_advance && !moving && selection_blending()){
+            underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
+            data_version++;full_dirty=true;
+        }
+    }
+}
+void atmos_advance(int direction){
+    direction=direction<0?-1:1;
+    if(moving || selection_blending() || pending_advance){pending_advance+=direction;return;}
+    advance_now(direction);
 }
 void atmos_navigate(int direction){atmos_set_scene(cycle_next(queued>=0?queued:moving?destination:scene,direction));}
 void atmos_set_scenario(int value){
@@ -2961,7 +3011,7 @@ void atmos_set_startup_delay(int reading,bool on){
     if(reading<0 || reading>=ATMOS_READINGS)return;
     startup_delay[key[reading]]=on;reading_delayed[reading]=on;full_dirty=true;data_version++;
 }
-void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;dirty_bands|=BAND_HEADER|BAND_BODY;data_version++;update_alerts();}
+void atmos_set_readings(atmos_readings value){sensor=value;external_data=true;dirty_bands|=BAND_HEADER|BAND_BODY|BAND_PANEL;data_version++;update_alerts();}
 void atmos_set_wifi(int bars){
     bars=bars<0?-1:bars>3?3:bars;
     if(bars==wifi_bars)return;
@@ -3212,7 +3262,7 @@ int atmos_self_test(void){
         float saved_enter=alert_enter,saved_leave=alert_leave;
         atmos_set_alert_times(0,0);
         automatic=true;alert_focus=true;
-        #define SETTLE() do{for(int i=0;i<400 && moving;i++)atmos_step(.025f);}while(0)
+        #define SETTLE() do{for(int i=0;i<400 && (moving || pending_advance || selection_blending());i++)atmos_step(.025f);}while(0)
         #define HOLD_END() do{for(int i=0;i<400 && !moving && age+.025f<hold;i++)atmos_step(.025f);}while(0)
         /* CO2 alone: a manual visit elsewhere returns to it, then it holds. */
         v=calm;v.co2=1500;atmos_set_readings(v);
@@ -3304,7 +3354,7 @@ int atmos_self_test(void){
     }
     {
         /* Overview detour and low light. */
-        #define SETTLE() do{for(int i=0;i<400 && moving;i++)atmos_step(.025f);}while(0)
+        #define SETTLE() do{for(int i=0;i<400 && (moving || pending_advance || selection_blending());i++)atmos_step(.025f);}while(0)
         #define HOLD_END() do{for(int i=0;i<4000 && !moving && age+.025f<hold;i++)atmos_step(.025f);atmos_step(.05f);}while(0)
         automatic=false;atmos_set_scene(1);SETTLE();
         /* Right: past the last reading to the overview, then the page after it. */
