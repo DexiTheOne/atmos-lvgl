@@ -23,19 +23,22 @@ static uint32_t ink_rgb=0x303030, paper_rgb=0xc6c6c6;
 static HWND window;
 /* --hw-pace (or H): hold each frame on screen for as long as the same kind of frame
    takes on the device, and advance the model the way the device loop does. Measured
-   on a Seeed XIAO ESP32-S3 (240 MHz) with esphome/atmos-bench.yaml on 2026-10-18:
-   own LVGL, 1-bit display, direct fills, table compositor, ST7305 SPI at 40 MHz
-   (40 MHz is not yet verified on a real panel; at 10 MHz add about 9 ms per frame).
+   on the Waveshare ESP32-S3-RLCD-4.2 (atmos, 240 MHz) on 2026-11-20: own LVGL, 1-bit
+   display, TE-paced frames at frame_period 29 ms, ST7305 SPI at 40 MHz. The overview's
+   transition cost is from an earlier run of the same day (the 4-minute run had none);
+   automatic cycling never pre-renders the overview.
    Milliseconds of work per frame: still frames per scene, transition frames per
    source scene, and hold-time pre-render steps per rasterised scene (from the
    device's PROFILE log line). hw_loop_ms is the device loop overhead between frames
    (frame interval minus frame work, averaged over the run). */
 static bool hw_pace;
 static double boot_ms=1500; /* simulated boot time the splash holds for (--boot=ms) */
-/* Formaldehyde (last entry) is not yet measured: the CO2 page's costs stand in. */
-static const double hw_still_ms[ATMOS_SCENES]={70.9,33.4,46.4,31.2,29.0,37.5};
-static const double hw_trans_ms[ATMOS_SCENES]={26.0,27.7,36.5,63.6,19.4,21.9};
-static const double hw_prerender_ms[ATMOS_SCENES]={71.8,38.3,57.0,55.4,33.5,41.9};
+static const double hw_still_ms[ATMOS_SCENES]={29.5,7.7,4.2,5.2,4.5,3.4};
+static const double hw_trans_ms[ATMOS_SCENES]={19.9,23.8,24.5,17.1,15.5,16.3};
+static const double hw_prerender_ms[ATMOS_SCENES]={0.0,5.8,12.3,4.8,8.2,4.8};
+/* The panel's refresh: the device shows frames only at refreshes (TE), one frame
+   per refresh at most, rendering one frame at a time. */
+static const double hw_refresh_ms=29.2;
 static const double hw_loop_ms=4.0;
 static void update_title(void);
 static unsigned flushes,transitions_checked;
@@ -628,13 +631,13 @@ int main(int argc,char **argv){
         play_alert_events();
         if(!hw_pace){lv_timer_handler();Sleep(2);continue;}
         /* One device frame: step, render, then hold for the device's cost of that frame
-           (never less than the device's 59 ms frame period, its 17 fps cap). */
+           rounded up to whole panel refreshes (at least one: the 34.2 fps cap). */
         int pre=atmos_step_prerendered();
         lv_refr_now(display);
         double cost=atmos_is_moving()?hw_trans_ms[atmos_scene()]:hw_still_ms[atmos_scene()];
         if(pre>=0)cost+=hw_prerender_ms[pre];
         cost+=hw_loop_ms;
-        next_frame=now+(cost>59?cost:59);
+        next_frame=now+ceil(cost/hw_refresh_ms)*hw_refresh_ms;
     }
     window=NULL;lv_deinit();return 0;
 }
