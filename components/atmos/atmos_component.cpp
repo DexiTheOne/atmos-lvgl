@@ -559,8 +559,6 @@ void AtmosComponent::frame_te_() {
       s->add(interval, this->last_work_, lag, push, expected);
     if (moving)
       this->current_transition_.add(interval, this->last_work_, lag, push, expected);
-    if (late && this->div_ == 1)
-      this->div_ = 2;  // until the next scene or transition
     if (late && this->frame_stats_)
       ESP_LOGI(TAG, "late frame: woke %.1f ms after its pulse, work %.1f ms (pre-render %d, convert %.1f), scene %d moving %d",
                this->late_info_[0] / 1000.0f, this->last_work_ / 1000.0f, (int) this->late_info_[1],
@@ -570,13 +568,11 @@ void AtmosComponent::frame_te_() {
   uint32_t period = this->te_period_(), min_div = this->min_div_();
   bool moving = atmos_is_moving();
   int key = atmos_scene() * 2 + (moving ? 1 : 0);
-  if (key != this->rate_key_ || this->div_ < min_div) {
-    // Rate per scene and transition, chosen as it starts: every refresh when its
-    // frames have cost under 80 % of one, else every second (or frame_period's).
-    this->rate_key_ = key;
-    uint32_t cost = key >= 0 && key < 12 ? this->cost_ema_[key] : 0;
-    this->div_ = min_div > 1 ? min_div : (cost != 0 && cost < period * 4 / 5 ? 1 : 2);
-  }
+  // Every scene and transition runs at frame_period (rounded to whole refreshes; 29 ms
+  // is every refresh). A frame that misses its refresh goes out at the next one and the
+  // model steps by the refreshes it took, so motion keeps its speed.
+  this->rate_key_ = key;
+  this->div_ = min_div;
   uint32_t tick = p->te_count();
   uint32_t target = this->last_target_ + this->div_;
   if ((int32_t) (target - (tick + 1)) < 0)
