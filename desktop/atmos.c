@@ -47,6 +47,9 @@ static void select_climate(int row);
 static int pending_advance;
 /* Set while a waiting key press starts a page change with more presses behind it. */
 static bool hurry;
+/* A key press during a transition rushes it: the rest plays within UI_RUSH_TIME. */
+static float rush=1;
+#define UI_RUSH_TIME 0.25f
 #define UI_HURRY_SCALE 0.5f
 static bool selection_blending(void);
 static void drain_advances(void);
@@ -2902,7 +2905,7 @@ void atmos_step(double dt){
     }
     update_alerts();
     if(moving){
-        movement+=dt;
+        movement+=dt*rush;
         if(movement>=duration){
             scene=destination;moving=intro=false;start_hold();
             if(scene!=0){anchor=scene;dark_parked=false;}full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;underline_age=UI_UNDERLINE_TIME;
@@ -2961,7 +2964,7 @@ void atmos_set_scene(int requested){
        at their time so the end still meets the live scene exactly. */
     bool ready=pre_stage==PRE_DONE && pre_from==scene && pre_to==requested && pre_version==data_version && pre_start<=t+1e-4;
     double start=ready?pre_start:t;
-    destination=requested;movement=t-start;moving=true;snapshots_ready=ready;pre_stage=0;
+    destination=requested;movement=t-start;moving=true;rush=1;snapshots_ready=ready;pre_stage=0;
     if(ready)prerendered_transitions++;
 }
 /* Hardware keys (no touch): step the underlined reading within the page first, and
@@ -2998,7 +3001,14 @@ static void drain_advances(void){
 }
 void atmos_advance(int direction){
     direction=direction<0?-1:1;
-    if(moving || selection_blending() || pending_advance){pending_advance+=direction;return;}
+    /* During a transition: rush its remainder, then step from the arriving page. */
+    if(moving){pending_advance+=direction;rush=fmaxf(rush,(float)((duration-movement)/UI_RUSH_TIME));return;}
+    if(pending_advance){pending_advance+=direction;return;}
+    /* A selection blend is short: finish it at once and step now. */
+    if(selection_blending()){
+        underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
+        data_version++;full_dirty=true;
+    }
     advance_now(direction);
 }
 void atmos_navigate(int direction){atmos_set_scene(cycle_next(queued>=0?queued:moving?destination:scene,direction));}
