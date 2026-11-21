@@ -1008,21 +1008,13 @@ static void chart_geometry(void){
    scrolls left a pixel at a time instead of a sample's width at each sample. It is
    a function of the drawing time (anim_t), so snapshots and band redraws agree;
    atmos_step() redraws the panel when the step changes. */
-/* While the history fills, the time axis holds a round span (the shortest that
-   fits the history so far, never past the window), so the trace scrolls in from
-   the right and the scale and labels change only when it outgrows the span. */
-static double chart_span_for(double held){
-    static const double spans[]={20,40,60,120,180,300,600,900,1200,1800,3600,7200,10800,14400,21600,43200,86400};
-    if(held>=history_window)return history_window;
-    for(unsigned i=0;i<sizeof spans/sizeof spans[0];i++)if(spans[i]>held && spans[i]<history_window)return spans[i];
-    return history_window;
-}
-static double chart_pixel_time(double span){
-    chart_geometry();
-    return span/(double)LV_MAX(1,UI_CHART_RIGHT-chart_left);
-}
+/* While the history fills, the chart stretches from the oldest sample to the newest
+   (no gaps), stepping only when a sample arrives. Once the window is held, the
+   edge runs on with the clock in whole-pixel steps. */
 static double chart_head_time(double oldest,double last,double now){
-    double px=chart_pixel_time(chart_span_for(last-oldest)),k=floor((now-last)/px);
+    if(now-oldest<history_window)return last;
+    chart_geometry();
+    double px=(double)history_window/(double)LV_MAX(1,UI_CHART_RIGHT-chart_left),k=floor((now-last)/px);
     return last+(k>0?k*px:0);
 }
 static void history_panel(void){
@@ -1200,10 +1192,10 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
         while(n && !chart_valid(chart_sample(samples[0].value,key,weights),key) &&
               !(blend && chart_valid(field(samples[0].value,chart_from_key),chart_from_key))){samples++;n--;}
     double first=n?samples[0].at:0,last=n?chart_head_time(first,samples[n-1].at,anim_t):0;
-    /* The chart shows a fixed span up to its edge (chart_span_for()); once the history
-       span is held it interpolates into the one sample kept from before it. */
-    double span=n?chart_span_for(samples[n-1].at-first):0;
-    first=last-span;
+    /* Once the history span is held, the chart shows exactly that span up to its
+       edge, interpolating into the one sample kept from before it. */
+    if(n && (last-first>history_window || anim_t-first>=history_window))first=last-history_window;
+    double span=last-first;
     if(!n){chart_axes(name,unit,span);history_caption(span);CHART_SYNC_LAP(4);return;}
     /* A single sample spans the full width as a flat trace, so the chart does
        not start as one column and then jump to full width at the second. */
@@ -1226,8 +1218,6 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
         n++;
     }
     int begin=chart_left,cursor=1,from_cursor=1;
-    /* Columns before the oldest sample stay empty while the history fills. */
-    if(times[0]>0)begin=chart_left+(int)ceil(times[0]/(float)span*(float)(UI_CHART_RIGHT-chart_left));
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
         float at=span>0?(float)span*(float)(x-chart_left)/(float)(UI_CHART_RIGHT-chart_left):(float)span;
         float value=chart_interpolate_values(times,values,n,at,key,&cursor);
