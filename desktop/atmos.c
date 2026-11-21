@@ -1181,7 +1181,10 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
     if(!n){chart_axes(name,unit,span);history_caption(span);CHART_SYNC_LAP(4);return;}
     /* A single sample spans the full width as a flat trace, so the chart does
        not start as one column and then jump to full width at the second. */
-    float previous=NAN,trace[UI_CHART_RIGHT+1],values[HISTORY_CAP],from_values[HISTORY_CAP],times[HISTORY_CAP];
+    /* Static, not on the stack: the device's loop task overflowed with them there
+       (about 2.4 KB on top of LVGL's draw call chain). The UI runs on one task. */
+    static float trace[UI_CHART_RIGHT+1],values[HISTORY_CAP],from_values[HISTORY_CAP],times[HISTORY_CAP];
+    float previous=NAN;
     if(n>HISTORY_CAP)n=HISTORY_CAP;
     for(int i=0;i<n;i++){
         times[i]=(float)(samples[i].at-first);
