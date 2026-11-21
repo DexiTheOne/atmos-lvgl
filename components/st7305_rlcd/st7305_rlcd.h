@@ -98,6 +98,8 @@ class ST7305RLCD : public display::DisplayBuffer,
   bool present(uint32_t target_te);
   /// True while a presented frame waits for its TE pulse or is being sent.
   bool busy() const { return this->busy_; }
+  /// True while converted rows wait for present().
+  bool has_unsent() const { return this->dirty_; }
   /// The latest completed push: TE pulse it went out at and the one it was aimed at,
   /// micros() of that pulse and of the push's start, its SPI time and bytes.
   struct PushRecord {

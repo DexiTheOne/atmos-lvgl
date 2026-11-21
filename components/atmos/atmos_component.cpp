@@ -626,7 +626,11 @@ void AtmosComponent::frame_te_() {
   }
   uint32_t timer_us, publish_us;
   this->service_(timer_us, publish_us);
-  if (this->frame_flushed_) {
+  // Present whatever the panel buffer holds unsent, not only when this frame's flush
+  // flag survived: lv_timer_handler() in service_() can start LVGL's own refresh,
+  // whose REFR_START event clears frame_flushed_, and the frame was then held back
+  // until a later one (in-page animations showed only their final frame).
+  if (p->has_unsent()) {
     this->last_work_ = work;
     this->late_info_[0] = wake_late;
     this->late_info_[1] = (uint32_t) pre;

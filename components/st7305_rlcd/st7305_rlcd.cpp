@@ -733,10 +733,10 @@ void ST7305RLCD::mark_dirty_(int y1, int y2, int x1, int x2) {
 }
 
 bool ST7305RLCD::present(uint32_t target_te) {
-  if (this->busy_)
-    return false;
   if (!this->dirty_)
     return true;  // nothing changed
+  if (this->busy_)
+    return false;
   this->pack_window_(this->win_);
   this->tx_win_ = this->win_;
   this->dirty_ = false;
