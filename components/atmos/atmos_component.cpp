@@ -542,7 +542,12 @@ void AtmosComponent::frame_te_() {
   uint32_t wake_late = this->wake_at_ != 0 ? now - this->wake_at_ : 0;
   this->wake_at_ = 0;
   if (this->pending_) {
-    // The previous frame is drawn but its predecessor's push is not done yet.
+    // The previous frame is drawn but its predecessor's push is not done yet. If its
+    // target refresh passed while it waited, aim at the next one, so one late frame
+    // does not leave every later frame a refresh behind (each would start at a pulse
+    // its predecessor's push still waited for).
+    if ((int32_t) (this->last_target_ - p->te_count()) <= 0)
+      this->last_target_ = p->te_count() + 1;
     if (!p->present(this->last_target_)) {
       this->set_timeout("frame", 1, [this]() { this->frame_(); });
       return;
