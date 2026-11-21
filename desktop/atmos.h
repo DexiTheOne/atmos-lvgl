@@ -79,6 +79,11 @@ void atmos_select_overview(void);
 void atmos_set_low_light(bool dark);
 bool atmos_low_light(void);
 void atmos_set_overview_dark(bool on);
+/* Themes: light (the standard look); dark (the whole frame inverted); inverted (a dark
+   body above the history panel, which keeps its light chart; the overview all dark). */
+enum{ATMOS_THEME_LIGHT,ATMOS_THEME_DARK,ATMOS_THEME_INVERTED,ATMOS_THEME_COUNT};
+void atmos_set_theme(int theme);
+int atmos_theme(void);
 bool atmos_overview_dark(void);
 void atmos_set_auto(bool on);
 bool atmos_auto(void);

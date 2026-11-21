@@ -43,6 +43,7 @@ CONF_SPLASH_TIMEOUT = "splash_timeout"
 CONF_READING_SELECT = "reading_select"
 CONF_TEMPERATURE_UNIT = "temperature_unit"
 CONF_PRESSURE_UNIT = "pressure_unit"
+CONF_THEME = "theme"
 CONF_AUTO_ADVANCE = "auto_advance"
 CONF_HOLD_TIME = "hold_time"
 CONF_ALERT = "alert"
@@ -128,6 +129,8 @@ ST7305RLCD = cg.esphome_ns.namespace("st7305_rlcd").class_("ST7305RLCD")
 # converts: linked sensors, ratings and what Home Assistant receives stay degC and hPa.
 TEMPERATURE_UNITS = ["°C", "°F"]
 PRESSURE_UNITS = ["hPa", "kPa", "mmHg", "inHg"]
+# Screen themes (atmos.h ATMOS_THEME_*, in order).
+THEMES = ["Light", "Dark", "Inverted"]
 
 
 def _unit_select_schema(options, icon):
@@ -236,6 +239,7 @@ CONFIG_SCHEMA = cv.Schema(
         # Units the screen shows temperature and pressure in (readings and charts).
         cv.Optional(CONF_TEMPERATURE_UNIT): _unit_select_schema(TEMPERATURE_UNITS, "mdi:thermometer"),
         cv.Optional(CONF_PRESSURE_UNIT): _unit_select_schema(PRESSURE_UNITS, "mdi:gauge"),
+        cv.Optional(CONF_THEME): _unit_select_schema(THEMES, "mdi:theme-light-dark"),
         cv.Optional(CONF_AUTO_ADVANCE): switch.switch_schema(
             AtmosAutoSwitch,
             default_restore_mode="RESTORE_DEFAULT_ON",
@@ -342,11 +346,17 @@ async def to_code(config):
         sel = await select.new_select(conf, options=["Auto Advance", "Overview"] + [name for _, name in READINGS])
         await cg.register_parented(sel, var)
         cg.add(var.set_reading_select(sel))
-    for key, options, pressure in ((CONF_TEMPERATURE_UNIT, TEMPERATURE_UNITS, False), (CONF_PRESSURE_UNIT, PRESSURE_UNITS, True)):
+    for key, options, pressure in (
+        (CONF_TEMPERATURE_UNIT, TEMPERATURE_UNITS, False),
+        (CONF_PRESSURE_UNIT, PRESSURE_UNITS, True),
+        (CONF_THEME, THEMES, False),
+    ):
         if conf := config.get(key):
             sel = await select.new_select(conf, options=options)
             await cg.register_component(sel, conf)
             cg.add(sel.set_pressure(pressure))
+            if key == CONF_THEME:
+                cg.add(sel.set_theme(True))
             cg.add(sel.set_initial(options.index(conf[CONF_INITIAL_OPTION])))
     if conf := config.get(CONF_AUTO_ADVANCE):
         sw = await switch.new_switch(conf)

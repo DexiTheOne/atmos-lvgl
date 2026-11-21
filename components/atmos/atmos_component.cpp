@@ -289,7 +289,9 @@ void AtmosUnitSelect::setup() {
 }
 
 void AtmosUnitSelect::control(size_t index) {
-  if (this->pressure_)
+  if (this->theme_)
+    atmos_set_theme((int) index);
+  else if (this->pressure_)
     atmos_set_pressure_unit((int) index);
   else
     atmos_set_temperature_unit((int) index);

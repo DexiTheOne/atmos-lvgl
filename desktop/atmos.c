@@ -1563,10 +1563,12 @@ static void pm_cards(int top){
 }
 /* Everything below the particle field: the cards and the history chart. Selection
    changes redraw only this box (and the field on its own ticks), not the page. */
+static void dark_invert(int which);
 static lv_area_t pm_lower_area(void){return (lv_area_t){0,UI_PM_FIELD_BOTTOM+1,UI_WIDTH-1,UI_HEIGHT-1};}
 static void draw_pm_lower(void){
     int y[3],value_y[2];pm_layout(y,value_y);
     rect(0,0,UI_WIDTH,UI_HEIGHT,true,0);pm_cards(y[2]);pm_history_chart();
+    dark_invert(2);
 }
 static void draw_pm_detail(void){
     const char *unit="\xc2\xb5" "g/m\xc2\xb3";
@@ -1996,10 +1998,23 @@ static void draw_gas_detail(void){
     history_panel();
     gas_chart(gas_selected?3:2,UI_CHART_TOP);
 }
+/* Themes, applied by inverting after drawing (whatever the clip area redrew):
+   ATMOS_THEME_DARK inverts the whole frame; ATMOS_THEME_INVERTED inverts everything
+   above the history panel (the whole overview), keeping the panel's look: a dark
+   body over the light chart. */
+static int theme;
+void atmos_set_theme(int t){theme=t<0||t>=ATMOS_THEME_COUNT?0:t;full_dirty=true;data_version++;}
+int atmos_theme(void){return theme;}
+static void dark_invert(int which){
+    if(theme==ATMOS_THEME_LIGHT)return;
+    int h=which==0 || theme==ATMOS_THEME_DARK?UI_HEIGHT:UI_HISTORY_PANEL_Y;
+    direct_fill(0,(int)offset,UI_WIDTH,h,FILL_INVERT);
+}
 static void draw_scene(int which){
     rect(0,0,UI_WIDTH,UI_HEIGHT,true,0);
     switch(which){case 0:draw_dashboard();break;case 1:draw_co2_detail();break;
         case 2:draw_pm_detail();break;case 3:draw_gas_detail();break;case 4:draw_climate_detail();break;default:draw_hcho_detail();break;}
+    dark_invert(which);
 }
 /* Fixed-point transition maths: Q16 progress/scale, Q8 screen positions,
    one exact integer square root per circle per row. No floating point per pixel. */
@@ -2489,6 +2504,7 @@ static void draw_animated(int which){
     switch(which){case 0:break;case 1:co2_live_bubbles();break;
         case 2:pm_particle_field();break;case 3:gas_ribbons();break;case 5:hcho_molecules();break;
         default:{climate_layout_t l=climate_layout();climate_icons(&l);}break;}
+    dark_invert(which);
 }
 /* Time spent in draw() since the last atmos_take_draw_us() (device profiling). LVGL
    draw tasks queued here (arcs, lines, text) run later, in LVGL's dispatch. */

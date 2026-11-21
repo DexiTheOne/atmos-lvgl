@@ -65,6 +65,7 @@ If the executable is locked during linking, close only this project's simulator 
 | W | Step the badge's Wi-Fi icon: 3, 2, 1, 0 bars, disconnected (start state `--wifi=n`, -1 disconnected) |
 | U / I | Temperature unit (°C, °F) / pressure unit (hPa, kPa, mmHg, inHg); also `--temp-unit=F`, `--pressure-unit=inHg` |
 | L / O | Toggle low light / overview in low light (`--low-light`, `--overview-dark`) |
+| T | Theme: light, dark (whole frame), inverted (dark body over the light history chart); `--theme=n` (0-2), the `theme` select on the device |
 | H | Toggle hardware pacing: hold each frame for its measured ESP32-S3 cost (also `--hw-pace`) |
 | F1â€“F5 | Quiet morning, occupied room, cooking, open windows, sensor full scale |
 | S | Save 400 Ã— 300 `atmos-frame.bmp` in the process working directory |

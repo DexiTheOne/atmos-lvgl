@@ -162,6 +162,7 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key=='I')atmos_set_pressure_unit((atmos_pressure_unit()+1)%4); /* hPa, kPa, mmHg, inHg */
         else if(key=='L'){atmos_set_low_light(!atmos_low_light());update_title();}
         else if(key=='O'){atmos_set_overview_dark(!atmos_overview_dark());update_title();}
+        else if(key=='T')atmos_set_theme((atmos_theme()+1)%ATMOS_THEME_COUNT); /* light, dark, inverted */
         else if(key=='H'){hw_pace=!hw_pace;update_title();}
         else if(key=='S')save_bmp("atmos-frame.bmp");
         else if(key=='R')reboot();
@@ -221,7 +222,7 @@ static void play_alert_events(void){
 static void update_title(void){
     if(!window)return;
     char title[320];
-    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | P alert focus%s | M sound%s | L low light%s | O overview in low light%s | W wifi | H hw pace | S save | R reboot",
+    snprintf(title,sizeof title,"Atmos | LVGL " LVGL_VERSION_TEXT "%s | 1-6 scenes | F1-F5 scenarios | Space pause | A auto | P alert focus%s | M sound%s | L low light%s | O overview in low light%s | W wifi | T theme | H hw pace | S save | R reboot",
         hw_pace?" | HW PACE (ESP32-S3, SPI 40 MHz)":"",atmos_alert_focus()?" ON":"",atmos_alert_sound()?" ON":"",
         atmos_low_light()?" ON":"",atmos_overview_dark()?" ON":"");
     SetWindowText(window,title);
@@ -246,6 +247,7 @@ int main(int argc,char **argv){
         }
         else if(strcmp(argv[i],"--alert-focus")==0)atmos_set_alert_focus(true);
         else if(strcmp(argv[i],"--overview-dark")==0)atmos_set_overview_dark(true);
+        else if(strncmp(argv[i],"--theme=",8)==0)atmos_set_theme(atoi(argv[i]+8));
         else if(strcmp(argv[i],"--low-light")==0)atmos_set_low_light(true);
         else if(strncmp(argv[i],"--paper=",8)==0){if(!parse_rgb(argv[i]+8,&paper_rgb)){fprintf(stderr,"Bad --paper\n");return 2;}}
         else argv[kept++]=argv[i];
