@@ -478,6 +478,54 @@ static void dashboard_text(const char *s,int x,int y,int size,bool reverse){
     d.font=dashboard_font(size);d.text=s;d.text_local=1;d.color=color(reverse);
     lv_area_t a={x,y+(int)offset,UI_WIDTH-1,y+(int)offset+100};lv_draw_label(layer,&d,&a);
 }
+/* Chart text (ui_chart_12, a fixed bitmap font) from glyphs baked once each: the
+   labels count through new numbers on every sample and selection blend, and a new
+   string cost a full LVGL label render. The glyphs are placed at LVGL's own pen
+   positions (advance plus kerning), so the pixels match a baked whole string. */
+static baked_text chart_glyph[96];static bool chart_glyph_ready[96];
+static const baked_text *chart_glyph_get(unsigned char ch){
+    if(ch<=32 || ch>=128)return NULL;
+    int i=ch-32;
+    if(!chart_glyph_ready[i]){
+        char one[2]={(char)ch,0};baked_text *e=bake_text(one,&ui_chart_12);
+        if(!e)return NULL;
+        chart_glyph[i]=*e;e->bits=NULL;e->font=NULL;e->text[0]=0;e->used=0;
+        chart_glyph_ready[i]=true;
+    }
+    return &chart_glyph[i];
+}
+/* Calls f for each glyph with its pen x; false if a glyph could not be baked. */
+static bool chart_glyphs(const char *s,void (*f)(const baked_text *,int,void *),void *ctx){
+    int pen=0;
+    for(const char *c=s;*c;c++){
+        unsigned char ch=(unsigned char)*c;
+        lv_font_glyph_dsc_t g;
+        bool known=lv_font_get_glyph_dsc(&ui_chart_12,&g,ch,(unsigned char)c[1]);
+        if(ch!=' '){const baked_text *e=chart_glyph_get(ch);if(!e)return false;f(e,pen,ctx);}
+        if(known)pen+=g.adv_w;
+    }
+    return true;
+}
+typedef struct{int x,y;lv_area_t area;}chart_text_at;
+static void chart_glyph_blit(const baked_text *e,int pen,void *ctx){
+    chart_text_at *p=ctx;blit_text(e,p->x+pen,p->y,&p->area,true);
+}
+static void chart_text(const char *s,int x,int y){
+    lv_draw_buf_t *buf=layer->draw_buf;
+    chart_text_at p={x,y+(int)offset,{x,y+(int)offset,UI_WIDTH-1,y+(int)offset+100}};
+    if(!buf || buf->header.cf!=LV_COLOR_FORMAT_I1 || !chart_glyphs(s,chart_glyph_blit,&p))
+        dashboard_text(s,x,y,UI_FONT_AXIS,true);
+}
+static void chart_glyph_ink(const baked_text *e,int pen,void *ctx){
+    int *lr=ctx;if(!e->w)return;
+    lr[0]=LV_MIN(lr[0],pen+e->ox);lr[1]=LV_MAX(lr[1],pen+e->ox+e->w-1);
+}
+/* Horizontal ink extent of chart text from its baked glyphs. */
+static bool chart_text_ink_x(const char *s,int *left,int *right){
+    int lr[2]={1<<20,-1};
+    if(!chart_glyphs(s,chart_glyph_ink,lr))return false;
+    *left=lr[0];*right=lr[1];return true;
+}
 /* Measure labels using the same font metrics LVGL uses to draw them. */
 static int text_width(const char *s,const lv_font_t *font){
     lv_point_t size;lv_text_get_size(&size,s,font,0,0,1000,LV_TEXT_FLAG_NONE);return size.x;
@@ -962,8 +1010,8 @@ static void chart_tick(float value,float y){
     if(fabs(value)>=10000)snprintf(label,sizeof label,"%.0fk",value/1000);
     else snprintf(label,sizeof label,fabs(value-round(value))>.01f && fabs(value)<100?"%.1f":"%.0f",value);
     lv_area_t ink=header_ink_bounds(label,&ui_chart_12);
-    dashboard_text(label,chart_left-UI_CHART_TICK_LENGTH-UI_CHART_LABEL_GAP-1-ink.x2,
-        (int)round(y)-(ink.y2-ink.y1+1)/2-ink.y1,UI_FONT_AXIS,true);
+    chart_text(label,chart_left-UI_CHART_TICK_LENGTH-UI_CHART_LABEL_GAP-1-ink.x2,
+        (int)round(y)-(ink.y2-ink.y1+1)/2-ink.y1);
     line(chart_left-UI_CHART_TICK_LENGTH,y,chart_left,y,1,true);
 }
 static bool axis_paper(int x,int y){
@@ -1008,13 +1056,13 @@ static void history_caption(double span){
     if(span<90)snprintf(text,sizeof text,"LAST %d SEC",(int)lround(span));
     else if(span<90*60)snprintf(text,sizeof text,"LAST %d MIN",(int)lround(span/60));
     else snprintf(text,sizeof text,"LAST %d HRS",(int)lround(fmin(span/3600,9999)));
-    int left,right;rendered_ink_x(text,&left,&right);
+    int left,right;if(!chart_text_ink_x(text,&left,&right))rendered_ink_x(text,&left,&right);
     lv_area_t caps=header_ink_bounds("H",&ui_chart_12);
     int pad_y=UI_HISTORY_PILL_PADDING,pad_x=UI_HISTORY_PILL_PADDING+UI_HISTORY_PILL_PADDING_X;
     int w=right-left+1+2*pad_x+2,h=caps.y2-caps.y1+1+2*pad_y+2,x=UI_CHART_RIGHT+1-w,y=UI_CHART_TOP;
     pill(x,y,w,h,UI_HISTORY_PILL_RADIUS,true);
     pill(x+1,y+1,w-2,h-2,UI_HISTORY_PILL_RADIUS-1,false);
-    dashboard_text(text,x+1+pad_x-left,y+1+pad_y-caps.y1,UI_FONT_AXIS,true);
+    chart_text(text,x+1+pad_x-left,y+1+pad_y-caps.y1);
 }
 static void chart_axes(const char *name,const char *unit,float span){
     (void)name;(void)unit; /* The page header names the channel and its unit. */
@@ -1025,7 +1073,7 @@ static void chart_axes(const char *name,const char *unit,float span){
         char label[24];snprintf(label,sizeof label,"%.0f",span*(UI_CHART_X_INTERVALS-i)/UI_CHART_X_INTERVALS);
         lv_area_t ink=header_ink_bounds(label,&ui_chart_12);
         if(span>0 || i==UI_CHART_X_INTERVALS)
-            dashboard_text(label,x-(ink.x2-ink.x1+1)/2-ink.x1,chart_tick_y-ink.y1,UI_FONT_AXIS,true);
+            chart_text(label,x-(ink.x2-ink.x1+1)/2-ink.x1,chart_tick_y-ink.y1);
         line(x,chart_bottom,x,chart_bottom+UI_CHART_TICK_LENGTH,1,true);
     }
 }
@@ -1052,12 +1100,15 @@ static float chart_interpolate_from(const sample *samples,int n,double at,int ke
 }
 /* The same interpolation over values converted once per draw (chart_sample()
    per sample, not per column; the PM mix and unit conversion are not free). */
-static float chart_interpolate_values(const sample *samples,const float *values,int n,double at,int key,int *cursor){
-    for(int i=*cursor;i<n;i++)if(at<=samples[i].at){
+/* Times are float seconds from the chart's first column (the ESP32-S3 has no
+   double unit). */
+static float chart_interpolate_values(const float *times,const float *values,int n,float at,int key,int *cursor){
+    for(int i=*cursor;i<n;i++)if(at<=times[i]){
         *cursor=i;
         float a=values[i-1],b=values[i];
         if(!isfinite(a) || !isfinite(b) || (key!=4 && (a<0 || b<0)))return NAN;
-        return mix(a,b,clamp((at-samples[i-1].at)/(samples[i].at-samples[i-1].at),0,1));
+        float dt=times[i]-times[i-1];
+        return mix(a,b,dt>0?clamp((at-times[i-1])/dt,0,1):1);
     }
     *cursor=n;
     return n?values[n-1]:NAN;
@@ -1130,20 +1181,21 @@ static void history_graph(const sample *samples,int n,int key,const float *weigh
     if(!n){chart_axes(name,unit,span);history_caption(span);CHART_SYNC_LAP(4);return;}
     /* A single sample spans the full width as a flat trace, so the chart does
        not start as one column and then jump to full width at the second. */
-    float previous=NAN,trace[UI_CHART_RIGHT+1],values[HISTORY_CAP],from_values[HISTORY_CAP];
+    float previous=NAN,trace[UI_CHART_RIGHT+1],values[HISTORY_CAP],from_values[HISTORY_CAP],times[HISTORY_CAP];
     if(n>HISTORY_CAP)n=HISTORY_CAP;
     for(int i=0;i<n;i++){
+        times[i]=(float)(samples[i].at-first);
         values[i]=chart_sample(samples[i].value,key,weights);
         if(blend)from_values[i]=chart_sample(samples[i].value,chart_from_key,NULL);
     }
     int begin=chart_left,cursor=1,from_cursor=1;
     for(int x=begin;x<=UI_CHART_RIGHT;x++){
-        double at=span>0?first+(last-first)*(x-chart_left)/(double)(UI_CHART_RIGHT-chart_left):last;
-        float value=chart_interpolate_values(samples,values,n,at,key,&cursor);
+        float at=span>0?(float)span*(float)(x-chart_left)/(float)(UI_CHART_RIGHT-chart_left):(float)span;
+        float value=chart_interpolate_values(times,values,n,at,key,&cursor);
         bool valid=isfinite(value) && (key==4 || value>=0);
         float y=valid?chart_y(value,low,high):NAN;
         if(blend){
-            float from=chart_interpolate_values(samples,from_values,n,at,chart_from_key,&from_cursor);
+            float from=chart_interpolate_values(times,from_values,n,at,chart_from_key,&from_cursor);
             if(isfinite(from) && (chart_from_key==4 || from>=0)){
                 float y0=chart_y(from,chart_from_low,chart_from_high);
                 y=valid?mix(y0,y,q):y0;valid=true;
@@ -2528,7 +2580,8 @@ static void invalidate_frame(void){
 /* Keep one sample older than the span, so the trace reaches the chart's left edge;
    drop older ones. */
 static void prune_history(void){
-    while(count>1 && t-history[1].at>=history_window){memmove(history,history+1,(--count)*sizeof *history);}
+    /* Dropping a sample can change the chart scale: redraw the panel. */
+    while(count>1 && t-history[1].at>=history_window){memmove(history,history+1,(--count)*sizeof *history);dirty_bands|=BAND_PANEL;data_version++;}
 }
 static void take_sample(void){
     if(!external_data){
@@ -2791,7 +2844,10 @@ void atmos_step(double dt){
         gas_intensity[lane]+=(gas_level(lane)-gas_intensity[lane])*(1-exp(-dt/UI_GAS_INTENSITY_TIME));
     }
     hcho_grow_step(dt);
-    if(t+1e-7f>=next_sample){take_sample();next_sample+=sample_every();}
+    /* A sample would shift the chart sideways mid-blend (and redraw it once more):
+       hold a due sample until the chart's blend ends, then take it with its real time. */
+    bool chart_blending=pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME;
+    if(t+1e-7f>=next_sample && !chart_blending){take_sample();next_sample=fmax(next_sample+sample_every(),t);}
     prune_history();
     update_alerts();
     if(moving){
