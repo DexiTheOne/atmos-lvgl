@@ -46,13 +46,11 @@ static void select_gas(int lane);
 static void select_climate(int row);
 static int pending_advance;
 /* Set while a waiting key press starts a page change with more presses behind it. */
-static bool hurry;
-static bool retarget_incoming;
-static bool retarget(int direction);
-/* A key press during a transition rushes it: the rest plays within UI_RUSH_TIME. */
-static float rush=1;
-#define UI_RUSH_TIME 0.25f
-#define UI_HURRY_SCALE 0.5f
+
+
+
+
+
 static bool selection_blending(void);
 static void drain_advances(void);
 static int gas_divider_x=UI_GAS_DIVIDER_X; /* Set by draw_gas_detail() for hit-testing. */
@@ -2568,10 +2566,6 @@ static void draw_frame(lv_event_t *event){
         }
         return;
     }
-    if(snapshots_ready && retarget_incoming){
-        anim_t=t-movement+duration;render_scene_buffer(1,destination);anim_t=t;
-    }
-    retarget_incoming=false;
     if(!snapshots_ready){
         double start=t-movement;
         anim_t=start;
@@ -2911,7 +2905,7 @@ void atmos_step(double dt){
     }
     update_alerts();
     if(moving){
-        movement+=dt*rush;
+        movement+=dt;
         if(movement>=duration){
             scene=destination;moving=intro=false;start_hold();
             if(scene!=0){anchor=scene;dark_parked=false;}full_dirty=true;chart_blend_age=UI_CHART_BLEND_TIME;underline_age=UI_UNDERLINE_TIME;
@@ -2965,12 +2959,12 @@ void atmos_set_scene(int requested){
         underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
         data_version++;
     }
-    duration=transition_duration(scene,requested)*(hurry?UI_HURRY_SCALE:1);
+    duration=transition_duration(scene,requested);
     /* Use the hold-time snapshots when they match; the transition clock then starts
        at their time so the end still meets the live scene exactly. */
     bool ready=pre_stage==PRE_DONE && pre_from==scene && pre_to==requested && pre_version==data_version && pre_start<=t+1e-4;
     double start=ready?pre_start:t;
-    destination=requested;movement=t-start;moving=true;rush=1;snapshots_ready=ready;pre_stage=0;
+    destination=requested;movement=t-start;moving=true;snapshots_ready=ready;pre_stage=0;
     if(ready)prerendered_transitions++;
 }
 /* Hardware keys (no touch): step the underlined reading within the page first, and
@@ -2989,57 +2983,34 @@ static void advance_now(int direction){
     age=0;atmos_set_scene(to);
 }
 /* Presses never cut an animation: a press during a transition or a selection
-   blend waits for it to finish. Waiting presses then play out coalesced: reading
-   steps with more presses behind them switch at once, and a page change with more
-   behind it runs at hurry speed, so the display catches up quickly. */
+   blend waits for it to finish. Then all waiting presses are applied at once to
+   find where they lead (readings selected and pages passed on the way switch
+   without showing), and that last step alone animates: from the page reached,
+   one transition (or selection blend) straight to the final page. */
 static bool selection_blending(void){
     return underline_age<UI_UNDERLINE_TIME || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME;
 }
 static void drain_advances(void){
-    while(pending_advance && !moving){
+    int s=scene,last_item=-1;
+    while(pending_advance){
         int d=pending_advance>0?1:-1;pending_advance-=d;
-        hurry=pending_advance!=0;advance_now(d);hurry=false;
-        if(pending_advance && !moving && selection_blending()){
-            underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
-            data_version++;full_dirty=true;
-        }
-    }
-}
-/* A press during a page change moves its destination on, as if the destination had
-   been reached: its next reading (set before it is shown) or the next page. The
-   transition keeps its motion and time; only its incoming snapshot is redrawn.
-   Not from the overview (its effect starts from the destination's tile) or the
-   intro, nor back onto the page being left. */
-static bool retarget(int direction){
-    int s=destination;
-    if(intro || scene==0)return false;
-    int item=auto_selected(s)+direction;
-    if(s!=0 && item>=0 && item<auto_items(s))auto_select(s,item);
-    else{
-        int an=s!=0?s:anchor;
-        int to=direction>0?(s==0?cycle_next(an,1):key_detoured?cycle_next(s,1):0):s==0?an:cycle_next(s,-1);
-        if(to==scene)return false;
+        int item=auto_selected(s)+d;
+        if(s!=0 && item>=0 && item<auto_items(s)){last_item=item;if(pending_advance || s!=scene)auto_select(s,item);continue;}
+        int to=d>0?(s==0?cycle_next(anchor,1):key_detoured?cycle_next(s,1):0):s==0?anchor:cycle_next(s,-1);
         if(s!=0)anchor=s;
         if(to==0)key_detoured=true;
-        auto_select(to,direction>0?0:auto_items(to)-1);
-        destination=to;
+        auto_select(to,d>0?0:auto_items(to)-1);
+        s=to;last_item=-1;
     }
+    /* Selections made on the way finish at once; the last step animates. */
     underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
-    data_version++;age=0;retarget_incoming=true;
-    return true;
+    data_version++;full_dirty=true;age=0;
+    if(s!=scene)atmos_set_scene(s);
+    else if(last_item>=0)auto_select(s,last_item);
 }
 void atmos_advance(int direction){
     direction=direction<0?-1:1;
-    /* During a page change: retarget it (its animation carries on), or failing that
-       rush its remainder and step from the arriving page. */
-    if(moving && !pending_advance && retarget(direction))return;
-    if(moving){pending_advance+=direction;rush=fmaxf(rush,(float)((duration-movement)/UI_RUSH_TIME));return;}
-    if(pending_advance){pending_advance+=direction;return;}
-    /* A selection blend is short: finish it at once and step now. */
-    if(selection_blending()){
-        underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
-        data_version++;full_dirty=true;
-    }
+    if(moving || pending_advance || selection_blending()){pending_advance+=direction;return;}
     advance_now(direction);
 }
 void atmos_navigate(int direction){atmos_set_scene(cycle_next(queued>=0?queued:moving?destination:scene,direction));}
@@ -3412,10 +3383,13 @@ int atmos_self_test(void){
         /* Left from the overview: the anchor's last reading; left never visits it. */
         atmos_advance(-1);SETTLE();if(scene!=3 || gas_selected!=1)return 63;
         atmos_advance(-1);atmos_advance(-1);SETTLE();if(scene!=1)return 63;
-        /* Presses during a page change retarget it: one transition, no stops between. */
+        /* Presses during a page change wait for it, then one transition goes straight
+           to where they lead (Gases' NOx passed on the way, not shown). */
         {bool kd=key_detoured;key_detoured=true;
          atmos_advance(1);if(!moving || destination!=3)return 67;
-         atmos_advance(1);atmos_advance(1);if(!moving || destination!=5 || gas_selected!=1 || pending_advance)return 67;
+         atmos_advance(1);atmos_advance(1);if(!moving || destination!=3 || pending_advance!=2)return 67;
+         for(int i=0;i<400 && moving && destination==3;i++)atmos_step(.025f);
+         if(!moving || destination!=5 || scene!=3 || gas_selected!=1 || pending_advance)return 67;
          SETTLE();if(scene!=5)return 67;
          atmos_set_scene(1);SETTLE();anchor=1;key_detoured=kd;}
         /* The cycle skips the overview; from the overview it resumes after the anchor. */
