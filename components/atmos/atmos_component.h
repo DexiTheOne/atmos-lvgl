@@ -112,7 +112,7 @@ class AtmosComponent : public Component {
   int last_bars_{-2};
   uint32_t wifi_changes_{0};
   uint32_t wake_at_{0};       // when the next frame should start (late-frame log)
-  uint32_t late_info_[3]{};   // presented frame: wake delay, pre-render scene, convert time
+  uint32_t late_info_[7]{};   // presented frame: wake delay, pre-render scene, convert time
   uint32_t seen_pushes_{0}, last_push_te_{0}, late_pushes_{0};
   uint64_t push_bytes_sum_{0};
   uint32_t push_n_{0};

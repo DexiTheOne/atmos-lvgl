@@ -560,9 +560,11 @@ void AtmosComponent::frame_te_() {
     if (moving)
       this->current_transition_.add(interval, this->last_work_, lag, push, expected);
     if (late && this->frame_stats_)
-      ESP_LOGI(TAG, "late frame: woke %.1f ms after its pulse, work %.1f ms (pre-render %d, convert %.1f), scene %d moving %d",
+      ESP_LOGI(TAG, "late frame: woke %.1f ms after its pulse, work %.1f ms (pre-render %d, convert %.1f), scene %d moving %d | tick %u target %u at present %u, pushed at %u for %u",
                this->late_info_[0] / 1000.0f, this->last_work_ / 1000.0f, (int) this->late_info_[1],
-               this->late_info_[2] / 1000.0f, atmos_scene(), (int) moving);
+               this->late_info_[2] / 1000.0f, atmos_scene(), (int) moving, (unsigned) this->late_info_[3],
+               (unsigned) this->late_info_[4], (unsigned) this->late_info_[5], (unsigned) p->last_push().te,
+               (unsigned) p->last_push().target);
   }
 
   uint32_t period = this->te_period_(), min_div = this->min_div_();
@@ -631,6 +633,9 @@ void AtmosComponent::frame_te_() {
     this->late_info_[0] = wake_late;
     this->late_info_[1] = (uint32_t) pre;
     this->late_info_[2] = this->convert_us_;
+    this->late_info_[3] = tick;
+    this->late_info_[4] = target;
+    this->late_info_[5] = p->te_count();
     this->pushed_moving_ = moving || atmos_is_moving();
     if (!p->present(target))
       this->pending_ = true;
