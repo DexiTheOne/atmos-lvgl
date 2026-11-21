@@ -350,6 +350,20 @@ Chart panel redraw (`BANDS ... panel`, `CHART` line with `frame_stats: true`), o
 Reading-change blends (Climate, Gases) dropped from about 15 ms to 4.6 ms per frame. Chart arrays
 live in static storage: on the stack they overflowed the loop task (530ddb5 crashed and rolled back).
 
+## Results: 2026-11-20, every refresh (34.2 Hz)
+
+`frame_period: 29ms`, every scene and transition at every refresh (c8b976a removed the 80 % rule
+and the demotion; 53932ae retargets a queued present). Four minutes on atmos:
+
+| | fps | Interval avg | Late (>43.8 ms) per 10 s | Render avg |
+|---|---|---|---|---|
+| Still pages | 33–34.1 | 29.3–30.7 ms | 1–11 | 5.6–7.7 ms |
+| Transitions | 23–29 | 35–43 ms | 8–20 per transition | 16–26 ms (max 54) |
+
+Before the retarget fix every push was one refresh late (342 of 342 per 10 s): one late frame left
+each later frame starting at a pulse its predecessor's push still waited for. Transition frames
+often exceed one refresh (render plus wake delay over 29.2 ms), so transitions mix 34 and 17 fps.
+
 ## Status LEDs (atmos_led)
 
 `atmos_led` colours an addressable LED strip with the rating on screen. Configure the
