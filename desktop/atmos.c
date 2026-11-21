@@ -45,6 +45,8 @@ static int gas_selected,climate_selected;
 static void select_gas(int lane);
 static void select_climate(int row);
 static int pending_advance;
+/* Queued key steps with more behind them play at double speed (transitions and blends). */
+static float key_speed=1;
 /* Set while a waiting key press starts a page change with more presses behind it. */
 
 
@@ -2879,9 +2881,10 @@ void atmos_step(double dt){
        or its last step (the card's final corner, the chart's end) stays on screen. */
     bool blending=pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME ||
         chart_rise_age<UI_CHART_BLEND_TIME || underline_age<UI_UNDERLINE_TIME;
-    pm_blend_age=fmin(UI_PM_TRANSITION_TIME,pm_blend_age+dt);chart_blend_age=fminf(UI_CHART_BLEND_TIME,chart_blend_age+(float)dt);
+    double bdt=dt*key_speed;
+    pm_blend_age=fmin(UI_PM_TRANSITION_TIME,pm_blend_age+bdt);chart_blend_age=fminf(UI_CHART_BLEND_TIME,chart_blend_age+(float)bdt);
     chart_rise_age=fminf(UI_CHART_BLEND_TIME,chart_rise_age+(float)dt);
-    underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)dt);
+    underline_age=fminf(UI_UNDERLINE_TIME,underline_age+(float)bdt);
     if(blending && pm_blend_age>=UI_PM_TRANSITION_TIME && chart_blend_age>=UI_CHART_BLEND_TIME &&
        chart_rise_age>=UI_CHART_BLEND_TIME && underline_age>=UI_UNDERLINE_TIME)dirty_bands|=BAND_BODY|BAND_PANEL;
     float concentration=isfinite(sensor.pm10)?clamp(sensor.pm10,0,UI_PM_DENSITY_LIMIT):0;
@@ -2946,7 +2949,7 @@ void atmos_step(double dt){
             else{if(to==0)dark_parked=true;prepare_next(to);atmos_set_scene(to);}
         }}
     /* Key presses held back by a transition or blend now step the display. */
-    if(!moving && pending_advance && !selection_blending())drain_advances();
+    if(!moving && !selection_blending()){if(pending_advance)drain_advances();else key_speed=1;}
     invalidate_frame();
 }
 void atmos_set_scene(int requested){
@@ -2959,7 +2962,7 @@ void atmos_set_scene(int requested){
         underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
         data_version++;
     }
-    duration=transition_duration(scene,requested);
+    duration=transition_duration(scene,requested)/key_speed;
     /* Use the hold-time snapshots when they match; the transition clock then starts
        at their time so the end still meets the live scene exactly. */
     bool ready=pre_stage==PRE_DONE && pre_from==scene && pre_to==requested && pre_version==data_version && pre_start<=t+1e-4;
@@ -2982,36 +2985,22 @@ static void advance_now(int direction){
     if(to!=scene)auto_select(to,direction>0?0:auto_items(to)-1);
     age=0;atmos_set_scene(to);
 }
-/* Presses never cut an animation: a press during a transition or a selection
-   blend waits for it to finish. Then all waiting presses are applied at once to
-   find where they lead (readings selected and pages passed on the way switch
-   without showing), and that last step alone animates: from the page reached,
-   one transition (or selection blend) straight to the final page. */
+/* Presses never cut an animation: a press during a transition or a selection blend
+   is queued, and queued steps play one after another, each in full. A step with
+   more queued behind it plays at double speed; the final one at normal speed. */
 static bool selection_blending(void){
     return underline_age<UI_UNDERLINE_TIME || pm_blend_age<UI_PM_TRANSITION_TIME || chart_blend_age<UI_CHART_BLEND_TIME;
 }
 static void drain_advances(void){
-    int s=scene,last_item=-1;
-    while(pending_advance){
-        int d=pending_advance>0?1:-1;pending_advance-=d;
-        int item=auto_selected(s)+d;
-        if(s!=0 && item>=0 && item<auto_items(s)){last_item=item;if(pending_advance || s!=scene)auto_select(s,item);continue;}
-        int to=d>0?(s==0?cycle_next(anchor,1):key_detoured?cycle_next(s,1):0):s==0?anchor:cycle_next(s,-1);
-        if(s!=0)anchor=s;
-        if(to==0)key_detoured=true;
-        auto_select(to,d>0?0:auto_items(to)-1);
-        s=to;last_item=-1;
-    }
-    /* Selections made on the way finish at once; the last step animates. */
-    underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
-    data_version++;full_dirty=true;age=0;
-    if(s!=scene)atmos_set_scene(s);
-    else if(last_item>=0)auto_select(s,last_item);
+    int d=pending_advance>0?1:-1;pending_advance-=d;
+    key_speed=pending_advance?2:1;
+    advance_now(d);
+    if(!moving && !selection_blending())key_speed=1;
 }
 void atmos_advance(int direction){
     direction=direction<0?-1:1;
     if(moving || pending_advance || selection_blending()){pending_advance+=direction;return;}
-    advance_now(direction);
+    key_speed=1;advance_now(direction);
 }
 void atmos_navigate(int direction){atmos_set_scene(cycle_next(queued>=0?queued:moving?destination:scene,direction));}
 void atmos_set_scenario(int value){
@@ -3383,13 +3372,15 @@ int atmos_self_test(void){
         /* Left from the overview: the anchor's last reading; left never visits it. */
         atmos_advance(-1);SETTLE();if(scene!=3 || gas_selected!=1)return 63;
         atmos_advance(-1);atmos_advance(-1);SETTLE();if(scene!=1)return 63;
-        /* Presses during a page change wait for it, then one transition goes straight
-           to where they lead (Gases' NOx passed on the way, not shown). */
+        /* Presses during a page change are queued and play in turn, each in full:
+           the queued NOx step at double speed, the final page change at normal speed. */
         {bool kd=key_detoured;key_detoured=true;
          atmos_advance(1);if(!moving || destination!=3)return 67;
          atmos_advance(1);atmos_advance(1);if(!moving || destination!=3 || pending_advance!=2)return 67;
-         for(int i=0;i<400 && moving && destination==3;i++)atmos_step(.025f);
-         if(!moving || destination!=5 || scene!=3 || gas_selected!=1 || pending_advance)return 67;
+         for(int i=0;i<400 && moving;i++)atmos_step(.025f);
+         if(scene!=3 || gas_selected!=1 || pending_advance!=1 || key_speed!=2 || !selection_blending())return 67;
+         for(int i=0;i<400 && !moving;i++)atmos_step(.025f);
+         if(destination!=5 || pending_advance || key_speed!=1)return 67;
          SETTLE();if(scene!=5)return 67;
          atmos_set_scene(1);SETTLE();anchor=1;key_detoured=kd;}
         /* The cycle skips the overview; from the overview it resumes after the anchor. */
