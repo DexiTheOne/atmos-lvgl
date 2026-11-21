@@ -47,6 +47,8 @@ static void select_climate(int row);
 static int pending_advance;
 /* Set while a waiting key press starts a page change with more presses behind it. */
 static bool hurry;
+static bool retarget_incoming;
+static bool retarget(int direction);
 /* A key press during a transition rushes it: the rest plays within UI_RUSH_TIME. */
 static float rush=1;
 #define UI_RUSH_TIME 0.25f
@@ -2566,6 +2568,10 @@ static void draw_frame(lv_event_t *event){
         }
         return;
     }
+    if(snapshots_ready && retarget_incoming){
+        anim_t=t-movement+duration;render_scene_buffer(1,destination);anim_t=t;
+    }
+    retarget_incoming=false;
     if(!snapshots_ready){
         double start=t-movement;
         anim_t=start;
@@ -2999,9 +3005,34 @@ static void drain_advances(void){
         }
     }
 }
+/* A press during a page change moves its destination on, as if the destination had
+   been reached: its next reading (set before it is shown) or the next page. The
+   transition keeps its motion and time; only its incoming snapshot is redrawn.
+   Not from the overview (its effect starts from the destination's tile) or the
+   intro, nor back onto the page being left. */
+static bool retarget(int direction){
+    int s=destination;
+    if(intro || scene==0)return false;
+    int item=auto_selected(s)+direction;
+    if(s!=0 && item>=0 && item<auto_items(s))auto_select(s,item);
+    else{
+        int an=s!=0?s:anchor;
+        int to=direction>0?(s==0?cycle_next(an,1):key_detoured?cycle_next(s,1):0):s==0?an:cycle_next(s,-1);
+        if(to==scene)return false;
+        if(s!=0)anchor=s;
+        if(to==0)key_detoured=true;
+        auto_select(to,direction>0?0:auto_items(to)-1);
+        destination=to;
+    }
+    underline_age=UI_UNDERLINE_TIME;pm_blend_age=UI_PM_TRANSITION_TIME;chart_blend_age=UI_CHART_BLEND_TIME;
+    data_version++;age=0;retarget_incoming=true;
+    return true;
+}
 void atmos_advance(int direction){
     direction=direction<0?-1:1;
-    /* During a transition: rush its remainder, then step from the arriving page. */
+    /* During a page change: retarget it (its animation carries on), or failing that
+       rush its remainder and step from the arriving page. */
+    if(moving && !pending_advance && retarget(direction))return;
     if(moving){pending_advance+=direction;rush=fmaxf(rush,(float)((duration-movement)/UI_RUSH_TIME));return;}
     if(pending_advance){pending_advance+=direction;return;}
     /* A selection blend is short: finish it at once and step now. */
@@ -3381,6 +3412,12 @@ int atmos_self_test(void){
         /* Left from the overview: the anchor's last reading; left never visits it. */
         atmos_advance(-1);SETTLE();if(scene!=3 || gas_selected!=1)return 63;
         atmos_advance(-1);atmos_advance(-1);SETTLE();if(scene!=1)return 63;
+        /* Presses during a page change retarget it: one transition, no stops between. */
+        {bool kd=key_detoured;key_detoured=true;
+         atmos_advance(1);if(!moving || destination!=3)return 67;
+         atmos_advance(1);atmos_advance(1);if(!moving || destination!=5 || gas_selected!=1 || pending_advance)return 67;
+         SETTLE();if(scene!=5)return 67;
+         atmos_set_scene(1);SETTLE();anchor=1;key_detoured=kd;}
         /* The cycle skips the overview; from the overview it resumes after the anchor. */
         automatic=true;HOLD_END();SETTLE();if(scene!=3)return 64;
         atmos_select_overview();SETTLE();if(scene!=0 || anchor!=3)return 65;
