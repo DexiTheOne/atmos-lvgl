@@ -337,6 +337,19 @@ Same device and settings as above (TE pacing, every second refresh), after profi
 
 Every change was pixel-identical across 237 simulator captures. Result (10 transitions, about 4 minutes): **every transition at 17.1 fps** (render 17-27 ms average, 75 ms worst), the driver's late pushes 0-4 per 10 s, mostly scenes trying every refresh (34 Hz) and being demoted.
 
+## Results: 2026-11-20, history chart
+
+Chart panel redraw (`BANDS ... panel`, `CHART` line with `frame_stats: true`), on atmos:
+
+| Build | Panel redraw | Notes |
+|---|---|---|
+| Before (5330673) | 16–23 ms | |
+| Samples converted once, columns written directly (8e52939) | 14–15.5 ms | Text and double time maths dominated |
+| Glyph-cached chart text, float column times (685f9ca) | 4.0–5.1 ms | y labels 0.5–1.0, samples 0.8–1.2, columns 0.8–1.1, axes 0.6–0.8, caption 0.3 ms |
+
+Reading-change blends (Climate, Gases) dropped from about 15 ms to 4.6 ms per frame. Chart arrays
+live in static storage: on the stack they overflowed the loop task (530ddb5 crashed and rolled back).
+
 ## Status LEDs (atmos_led)
 
 `atmos_led` colours an addressable LED strip with the rating on screen. Configure the
