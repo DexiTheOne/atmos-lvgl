@@ -164,6 +164,9 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key=='O'){atmos_set_overview_dark(!atmos_overview_dark());update_title();}
         else if(key=='T')atmos_set_theme((atmos_theme()+1)%ATMOS_THEME_COUNT); /* light, dark, inverted */
         else if(key=='H'){hw_pace=!hw_pace;update_title();}
+        /* History span: halve / double (1 min to 24 h); a short span scrolls fast. */
+        else if(key==VK_OEM_MINUS)atmos_set_history_window(atmos_history_window()/2);
+        else if(key==VK_OEM_PLUS)atmos_set_history_window(atmos_history_window()*2);
         else if(key=='S')save_bmp("atmos-frame.bmp");
         else if(key=='R')reboot();
         else if(key==VK_ESCAPE)DestroyWindow(hwnd);
@@ -408,6 +411,20 @@ int main(int argc,char **argv){
         if(verify_frame())return 23;
         save_bmp("pm-missing.bmp");
         puts("PM: independent channels, all selections, graph blends, rapid reselection and overflow captured.");
+        lv_deinit();return 0;
+    }
+    if(argc>1 && strcmp(argv[1],"--capture-scroll")==0){
+        /* The chart scrolling between samples at a 1 min span: filling, then held. */
+        atmos_toggle_auto();atmos_set_history_window(60);atmos_set_scene(1);
+        for(int f=0;f<4000;f++){
+            double s=f*.025;
+            atmos_set_readings((atmos_readings){600+sin(s*.2)*120+sin(s*.9)*25,1,40,1,21,45,.6,1.5,2.2,1013.2f,12});
+            advance();
+            if((f>=120 && f<520 && f%4==0) || (f>=3000 && f<3400 && f%4==0)){
+                char path[80];snprintf(path,sizeof path,"scroll-%04d.bmp",f);save_bmp(path);
+            }
+        }
+        puts("Scroll: filling and held chart frames captured (scroll-NNNN.bmp).");
         lv_deinit();return 0;
     }
     if(argc>1 && strcmp(argv[1],"--capture-co2")==0){
