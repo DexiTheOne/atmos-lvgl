@@ -475,22 +475,45 @@ bool AtmosComponent::park_low_power_() {
   this->te_frames_ = false;
   this->parked_lpm_ = true;
   this->next_step_us_ = micros();
+  ESP_LOGI(TAG, "overview low power: parked");
   return true;
 }
 
+/* 38h takes effect only after the panel's current (slow) refresh, so the animation is
+   held (frame_() skips model steps) until high-power TE pulses arrive; TE-paced frames
+   before then rendered ahead of pulses that had not come, cutting the transition short. */
 void AtmosComponent::leave_low_power_() {
   auto *p = this->panel_;
   while (p->busy())
     delayMicroseconds(100);
   p->high_power_mode();
+  this->parked_lpm_ = false;
+  this->leaving_lpm_ = true;
+  this->leave_te_ = p->te_count();
+  this->leave_us_ = micros();
+}
+
+void AtmosComponent::resume_te_frames_() {
+  auto *p = this->panel_;
+  // A pulse after 38h that came under 50 ms after the one before: high-power refresh.
+  if (!this->leaving_lpm_ || p->te_count() - this->leave_te_ < 2 || p->te_last_gap_us() > 50000 || p->busy())
+    return;
   p->set_untimed(false);
   this->te_frames_ = true;
-  this->parked_lpm_ = false;
+  this->leaving_lpm_ = false;
   this->last_target_ = p->te_count();
+  ESP_LOGI(TAG, "overview low power: high-power refresh back after %.0f ms", (micros() - this->leave_us_) / 1000.0f);
 }
 
 void AtmosComponent::frame_() {
   this->send_panel_cmds_();
+  this->resume_te_frames_();
+  if (this->leaving_lpm_) {
+    // Hold the animation (no model steps) until the panel refreshes at high power again.
+    this->next_step_us_ = micros() + this->period_us_;
+    this->set_timeout("frame", 2, [this]() { this->frame_(); });
+    return;
+  }
   if (this->frozen_ && !this->pending_) {
     // Hold: no model step, render or push (a frame still waiting goes out first).
     // Restart step timing when resuming, so the model does not catch up the frozen time.
@@ -529,7 +552,7 @@ void AtmosComponent::frame_() {
     atmos_step(steps * this->period_us_ / 1e6);
     step_us = micros() - step_start;
     if (this->parked_lpm_ && (atmos_scene() != 0 || atmos_is_moving()))
-      this->leave_low_power_();  // this frame renders unsent; frame_te_() presents it
+      this->leave_low_power_();
     pre = atmos_step_prerendered();
     if (pre >= 0) {
       this->pre_cost_[pre] += micros() - step_start;

@@ -626,6 +626,7 @@ void IRAM_ATTR ST7305RLCD::te_isr_(ST7305RLCD *self) {
     self->te_period_q4_ += (int32_t) (dt * 16 - self->te_period_q4_) / 16;  // EMA, 1/16
   else if (self->te_count_ == 1 && dt > 5000 && dt < 200000)
     self->te_period_q4_ = dt * 16;
+  self->te_gap_us_ = dt;
   self->te_time_us_ = now;
   self->te_count_ = self->te_count_ + 1;
   if (self->armed_ && (int32_t) (self->te_count_ - self->target_te_) >= 0) {

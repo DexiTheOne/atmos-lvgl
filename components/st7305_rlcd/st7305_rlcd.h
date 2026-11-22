@@ -60,6 +60,8 @@ class ST7305RLCD : public display::DisplayBuffer,
   /// TE rising edges since setup, and the micros() of the latest.
   uint32_t te_count() const { return this->te_count_; }
   uint32_t te_time_us() const { return this->te_time_us_; }
+  /// Gap between the last two TE pulses (us).
+  uint32_t te_last_gap_us() const { return this->te_gap_us_; }
   /// Measured refresh period (TE pulse interval, averaged), 0 until known.
   uint32_t te_period_us() const { return this->te_period_q4_ / 16; }
   /// Push only the changed window (default); false sends the whole frame every time.
@@ -173,6 +175,7 @@ class ST7305RLCD : public display::DisplayBuffer,
   volatile uint32_t target_te_{0}, push_te_{0}, push_target_{0}, push_edge_us_{0};
   volatile uint32_t push_bytes_{0}, pushes_{0};
   volatile int32_t te_period_q4_{0};
+  volatile uint32_t te_gap_us_{0};
   PushRecord done_{};
 
   GPIOPin *dc_pin_{nullptr};

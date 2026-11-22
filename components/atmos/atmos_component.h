@@ -141,6 +141,10 @@ class AtmosComponent : public Component {
   bool in_lpm_{false};
   bool overview_lpm_{true};
   bool parked_lpm_{false};   // overview parked in low-power mode, untimed frames
+  bool leaving_lpm_{false};  // 38h sent; untimed until high-power TE pulses return
+  uint32_t leave_te_{0};
+  uint32_t leave_us_{0};
+  void resume_te_frames_();
   bool park_low_power_();
   void leave_low_power_();
   std::vector<std::vector<uint8_t>> panel_cmds_;
