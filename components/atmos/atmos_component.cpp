@@ -493,9 +493,10 @@ void AtmosComponent::leave_low_power_() {
     delayMicroseconds(100);
   // The repaint at high power (a lighter sweep, the panel's own) runs at 16 Hz, half
   // speed, so it reads like the low-power sweep on entry rather than a flash.
-  p->set_high_power_slow(true);
+  // Sent at the next TE pulse, so the repaint starts at the panel's first line (sent
+  // mid-refresh it began mid-screen and wrapped around).
+  p->high_power_at_te();
   this->slow_repaint_ = true;
-  p->high_power_mode();
   // Write nothing while the panel switches: this frame renders unsent (flush_cb_
   // presents only untimed frames) and goes out at the first high-power TE pulse.
   this->te_frames_ = true;

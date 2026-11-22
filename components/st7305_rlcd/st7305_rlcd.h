@@ -93,6 +93,10 @@ class ST7305RLCD : public display::DisplayBuffer,
      instead of the configured fast one (32 or 51 Hz); no effect for a slow refresh_rate.
      Only between pushes. */
   void set_high_power_slow(bool slow);
+  /* Leave low-power mode at the next TE pulse (start of the blank), so the repaint
+     starts at the panel's first line: the push task sends B2h (16/25.5 Hz) and 38h.
+     Only with a TE pin and no push queued; busy() until sent. */
+  void high_power_at_te();
   /* Panel test: send a raw command with data. Refused (false) while a push is queued
      or running; call it with frames stopped (atmos freeze). */
   bool command(uint8_t cmd, const uint8_t *data, size_t len);
@@ -177,7 +181,7 @@ class ST7305RLCD : public display::DisplayBuffer,
   bool dirty_{false};
   bool partial_{true};
   bool untimed_{false};
-  volatile bool busy_{false}, armed_{false};
+  volatile bool busy_{false}, armed_{false}, switch_armed_{false}, switch_now_{false};
   volatile uint32_t target_te_{0}, push_te_{0}, push_target_{0}, push_edge_us_{0};
   volatile uint32_t push_bytes_{0}, pushes_{0};
   volatile int32_t te_period_q4_{0};

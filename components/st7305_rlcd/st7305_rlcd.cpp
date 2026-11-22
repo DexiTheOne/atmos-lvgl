@@ -635,6 +635,14 @@ void IRAM_ATTR ST7305RLCD::te_isr_(ST7305RLCD *self) {
   self->te_gap_us_ = dt;
   self->te_time_us_ = now;
   self->te_count_ = self->te_count_ + 1;
+  if (self->switch_armed_) {
+    self->switch_armed_ = false;
+    self->switch_now_ = true;
+    BaseType_t woken = pdFALSE;
+    vTaskNotifyGiveFromISR(self->push_task_handle_, &woken);
+    portYIELD_FROM_ISR(woken);
+    return;
+  }
   if (self->armed_ && (int32_t) (self->te_count_ - self->target_te_) >= 0) {
     self->armed_ = false;
     self->push_edge_us_ = now;
@@ -650,6 +658,13 @@ void ST7305RLCD::push_task_(void *arg) {
   auto *self = static_cast<ST7305RLCD *>(arg);
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (self->switch_now_) {
+      self->switch_now_ = false;
+      self->set_high_power_slow(true);
+      self->high_power_mode();
+      self->busy_ = false;
+      continue;
+    }
     uint32_t start = micros();
     uint32_t edge = self->push_edge_us_, te = self->push_te_, target = self->push_target_;
     self->send_window_(self->tx_win_);
@@ -841,6 +856,16 @@ bool ST7305RLCD::command(uint8_t cmd, const uint8_t *data, size_t len) {
     snprintf(hex + 3 * i, 4, " %02X", data[i]);
   ESP_LOGI(TAG, "panel command %02Xh:%s", cmd, hex);
   return true;
+}
+
+void ST7305RLCD::high_power_at_te() {
+  if (this->te_pin_ == nullptr || this->push_task_handle_ == nullptr) {
+    this->set_high_power_slow(true);
+    this->high_power_mode();
+    return;
+  }
+  this->busy_ = true;
+  this->switch_armed_ = true;
 }
 
 void ST7305RLCD::set_high_power_slow(bool slow) {
