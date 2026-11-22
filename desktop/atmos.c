@@ -3072,6 +3072,11 @@ void atmos_select_reading(int r){
     auto_select(s,reading_item[r]);age=0;pending_advance=0;
     atmos_set_scene(s);
 }
+float atmos_overview_hold_left(void){
+    if(scene!=0 || moving || paused || hidden || (dark_mode() && (automatic || dark_parked)))return -1;
+    if(dark_parked)return lit_wait?LV_MAX(0.0f,(float)(hold-age)):hold;  /* lit again */
+    return automatic?LV_MAX(0.0f,(float)(hold-age)):-1;
+}
 void atmos_select_overview(void){age=0;pending_advance=0;atmos_set_scene(0);}
 void atmos_set_low_light(bool dark){
     if(dark==low_light)return;

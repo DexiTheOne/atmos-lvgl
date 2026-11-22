@@ -117,6 +117,10 @@ int atmos_poll_event(void);
 #define ATMOS_HOLD_MAX 600.0f
 void atmos_set_hold(float seconds);
 float atmos_hold(void);
+/* Seconds (active time) until the still overview's hold ends and the display leaves it
+   by itself (automatic cycling, or lit again after a low-light park); -1 when it will
+   not leave on its own (manual, parked in low light, paused, moving, another scene). */
+float atmos_overview_hold_left(void);
 /* Time span the history charts show. Shrinking it discards older samples; growing it
    lets the chart fill up to the new span. Samples start every 2 s and stretch up to span/60 as history accumulates. */
 #define ATMOS_HISTORY_MIN 60.0f
