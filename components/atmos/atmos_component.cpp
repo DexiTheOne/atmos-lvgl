@@ -491,12 +491,9 @@ void AtmosComponent::leave_low_power_() {
   auto *p = this->panel_;
   while (p->busy())
     delayMicroseconds(100);
-  // The repaint at high power (a lighter sweep, the panel's own) runs at 16 Hz, half
-  // speed, so it reads like the low-power sweep on entry rather than a flash.
-  // Sent at the next TE pulse, so the repaint starts at the panel's first line (sent
-  // mid-refresh it began mid-screen and wrapped around).
-  p->high_power_at_te();
-  this->slow_repaint_ = true;
+  // The panel then repaints at high power (a lighter sweep, its own; it starts at
+  // the same line whatever the timing of 38h, and a 16 Hz repaint only slowed it).
+  p->high_power_mode();
   // Write nothing while the panel switches: this frame renders unsent (flush_cb_
   // presents only untimed frames) and goes out at the first high-power TE pulse.
   this->te_frames_ = true;
@@ -510,16 +507,6 @@ void AtmosComponent::resume_te_frames_() {
   auto *p = this->panel_;
   if (!this->leaving_lpm_ || p->te_count() - this->leave_te_ < 2 || p->busy())
     return;
-  if (this->slow_repaint_) {
-    // A 16 Hz gap (under 80 ms; low-power gaps are 125 ms and up) ends the slow repaint.
-    if (p->te_last_gap_us() > 80000)
-      return;
-    p->set_high_power_slow(false);
-    this->slow_repaint_ = false;
-    this->leave_te_ = p->te_count();
-    ESP_LOGI(TAG, "overview low power: slow repaint done after %.0f ms", (micros() - this->leave_us_) / 1000.0f);
-    return;
-  }
   // A pulse under 50 ms after the one before: the fast high-power refresh.
   if (p->te_last_gap_us() > 50000)
     return;
