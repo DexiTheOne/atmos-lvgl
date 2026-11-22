@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+#include <string>
+#include <vector>
+
 #include "esphome/core/automation.h"
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
@@ -48,6 +51,9 @@ class AtmosComponent : public Component {
      from its own memory. Active time is frozen; unfreezing resumes without a jump. */
   void set_frozen(bool on, bool low_power = true);
   bool frozen() const { return this->frozen_; }
+  /* Panel test: queue a raw ST7305 command as hex ("C1 19 19 19 19": command, then
+     data). Sent between frame pushes, so the UI keeps running. False if unparsable. */
+  bool queue_panel_command(const std::string &hex);
   void set_key_interval_ms(uint32_t ms) { this->key_interval_ms_ = ms; }
   void set_splash_name(const char *name) { this->splash_name_ = name; }
   void set_splash_subtitle(const char *text) { this->splash_subtitle_ = text; }
@@ -130,6 +136,8 @@ class AtmosComponent : public Component {
   bool frozen_{false};
   bool freeze_lpm_{false};   // enter Low Power Mode once the last frame is out
   bool in_lpm_{false};
+  std::vector<std::vector<uint8_t>> panel_cmds_;
+  void send_panel_cmds_();
   void test_draw_();
   void test_report_();
   uint32_t test_count_{0};

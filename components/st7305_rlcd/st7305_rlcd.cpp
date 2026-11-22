@@ -831,7 +831,10 @@ bool ST7305RLCD::command(uint8_t cmd, const uint8_t *data, size_t len) {
   for (size_t i = 0; i < len; i++)
     this->transmit_(data + i, 1, true);
   this->cs_->digital_write(true);
-  ESP_LOGI(TAG, "panel command %02Xh (%u data bytes)", cmd, (unsigned) len);
+  char hex[3 * 32 + 1] = "";
+  for (size_t i = 0; i < len && i < 32; i++)
+    snprintf(hex + 3 * i, 4, " %02X", data[i]);
+  ESP_LOGI(TAG, "panel command %02Xh:%s", cmd, hex);
   return true;
 }
 

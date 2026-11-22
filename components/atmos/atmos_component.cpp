@@ -425,7 +425,45 @@ void AtmosComponent::set_frozen(bool on, bool low_power) {
   ESP_LOGI(TAG, "frames %s", on ? "frozen (panel holds the last frame)" : "resumed");
 }
 
+bool AtmosComponent::queue_panel_command(const std::string &hex) {
+  std::vector<uint8_t> bytes;
+  size_t i = 0;
+  while (i < hex.size()) {
+    if (hex[i] == ' ' || hex[i] == ',') {
+      i++;
+      continue;
+    }
+    size_t j = i;
+    while (j < hex.size() && hex[j] != ' ' && hex[j] != ',')
+      j++;
+    std::string tok = hex.substr(i, j - i);
+    if (tok.size() > 2 && (tok[1] == 'x' || tok[1] == 'X'))
+      tok = tok.substr(2);
+    if (tok.empty() || tok.size() > 2 || tok.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) {
+      ESP_LOGW(TAG, "panel command: bad byte '%s' (hex bytes, e.g. C1 19 19 19 19)", tok.c_str());
+      return false;
+    }
+    bytes.push_back((uint8_t) strtoul(tok.c_str(), nullptr, 16));
+    i = j;
+  }
+  if (bytes.empty() || bytes.size() > 33)
+    return false;
+  this->panel_cmds_.push_back(bytes);
+  return true;
+}
+
+/* Raw test commands go out only while no push is queued or running. */
+void AtmosComponent::send_panel_cmds_() {
+  auto *p = this->panel_;
+  while (!this->panel_cmds_.empty() && p != nullptr && !p->busy()) {
+    auto &c = this->panel_cmds_.front();
+    p->command(c[0], c.data() + 1, c.size() - 1);
+    this->panel_cmds_.erase(this->panel_cmds_.begin());
+  }
+}
+
 void AtmosComponent::frame_() {
+  this->send_panel_cmds_();
   if (this->frozen_ && !this->pending_) {
     // Hold: no model step, render or push (a frame still waiting goes out first).
     // Restart step timing when resuming, so the model does not catch up the frozen time.
