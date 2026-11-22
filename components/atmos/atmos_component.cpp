@@ -487,6 +487,9 @@ void AtmosComponent::leave_low_power_() {
   while (p->busy())
     delayMicroseconds(100);
   p->high_power_mode();
+  // Write nothing while the panel switches: this frame renders unsent (flush_cb_
+  // presents only untimed frames) and goes out at the first high-power TE pulse.
+  this->te_frames_ = true;
   this->parked_lpm_ = false;
   this->leaving_lpm_ = true;
   this->leave_te_ = p->te_count();
