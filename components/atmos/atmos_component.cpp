@@ -462,6 +462,33 @@ void AtmosComponent::send_panel_cmds_() {
   }
 }
 
+/* Low-power overview. Entered from frame_te_() once the still overview's last push is
+   done: 39h, then untimed frames at frame_period (TE drops to 1 Hz; written frames
+   show at the panel's next refresh). Left before the first frame of anything else. */
+bool AtmosComponent::park_low_power_() {
+  auto *p = this->panel_;
+  if (!this->overview_lpm_ || this->frozen_ || this->pending_ || atmos_scene() != 0 || atmos_is_moving() ||
+      p->busy() || p->has_unsent())
+    return false;
+  p->low_power_mode();
+  p->set_untimed(true);
+  this->te_frames_ = false;
+  this->parked_lpm_ = true;
+  this->next_step_us_ = micros();
+  return true;
+}
+
+void AtmosComponent::leave_low_power_() {
+  auto *p = this->panel_;
+  while (p->busy())
+    delayMicroseconds(100);
+  p->high_power_mode();
+  p->set_untimed(false);
+  this->te_frames_ = true;
+  this->parked_lpm_ = false;
+  this->last_target_ = p->te_count();
+}
+
 void AtmosComponent::frame_() {
   this->send_panel_cmds_();
   if (this->frozen_ && !this->pending_) {
@@ -501,6 +528,8 @@ void AtmosComponent::frame_() {
     uint32_t step_start = micros();
     atmos_step(steps * this->period_us_ / 1e6);
     step_us = micros() - step_start;
+    if (this->parked_lpm_ && (atmos_scene() != 0 || atmos_is_moving()))
+      this->leave_low_power_();  // this frame renders unsent; frame_te_() presents it
     pre = atmos_step_prerendered();
     if (pre >= 0) {
       this->pre_cost_[pre] += micros() - step_start;
@@ -620,6 +649,10 @@ void AtmosComponent::frame_te_() {
       return;
     }
     this->pending_ = false;
+  }
+  if (this->park_low_power_()) {
+    this->set_timeout("frame", this->period_us_ / 1000, [this]() { this->frame_(); });
+    return;
   }
   uint32_t interval, lag, push;
   bool late;

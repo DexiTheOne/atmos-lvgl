@@ -739,7 +739,7 @@ bool ST7305RLCD::present(uint32_t target_te) {
   this->tx_win_ = this->win_;
   this->dirty_ = false;
   this->busy_ = true;
-  if (this->te_pin_ == nullptr || this->push_task_handle_ == nullptr) {
+  if (this->te_pin_ == nullptr || this->untimed_ || this->push_task_handle_ == nullptr) {
     this->push_edge_us_ = micros();
     this->push_te_ = this->push_target_ = this->te_count_;
     if (this->push_task_handle_ != nullptr) {

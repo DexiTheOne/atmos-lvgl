@@ -107,6 +107,9 @@ class ST7305RLCD : public display::DisplayBuffer,
   bool present(uint32_t target_te);
   /// True while a presented frame waits for its TE pulse or is being sent.
   bool busy() const { return this->busy_; }
+  /* Untimed presents: push at once instead of at a TE pulse (for low-power mode,
+     whose TE comes at 1 Hz). */
+  void set_untimed(bool on) { this->untimed_ = on; }
   /// True while converted rows wait for present().
   bool has_unsent() const { return this->dirty_; }
   /// The latest completed push: TE pulse it went out at and the one it was aimed at,
@@ -165,6 +168,7 @@ class ST7305RLCD : public display::DisplayBuffer,
   Window win_{}, tx_win_{};
   bool dirty_{false};
   bool partial_{true};
+  bool untimed_{false};
   volatile bool busy_{false}, armed_{false};
   volatile uint32_t target_te_{0}, push_te_{0}, push_target_{0}, push_edge_us_{0};
   volatile uint32_t push_bytes_{0}, pushes_{0};

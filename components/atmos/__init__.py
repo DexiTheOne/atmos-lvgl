@@ -36,6 +36,7 @@ CONF_FRAME_PERIOD = "frame_period"
 CONF_REPORT_INTERVAL = "report_interval"
 CONF_FRAME_STATS = "frame_stats"
 CONF_DISPLAY_TEST = "display_test"
+CONF_OVERVIEW_LOW_POWER = "overview_low_power"
 CONF_KEY_INTERVAL = "key_interval"
 CONF_SPLASH_NAME = "splash_name"
 CONF_SPLASH_SUBTITLE = "splash_subtitle"
@@ -222,6 +223,8 @@ CONFIG_SCHEMA = cv.Schema(
         # Panel speed test: no UI; a counter and a moving box drawn straight into the
         # frame every frame_period, logged every report_interval.
         cv.Optional(CONF_DISPLAY_TEST, default=False): cv.boolean,
+        # Show the still overview in the panel's low-power mode (1 Hz, darker black).
+        cv.Optional(CONF_OVERVIEW_LOW_POWER, default=True): cv.boolean,
         # Minimum time between accepted atmos.next/atmos.previous presses.
         # Boot splash: this name over a "Made for ESPHome" badge, held until a Home
         # Assistant client connects (or the network, without the API), at most this long.
@@ -323,6 +326,7 @@ async def to_code(config):
     cg.add(var.set_report_interval_ms(config[CONF_REPORT_INTERVAL].total_milliseconds))
     cg.add(var.set_frame_stats(config[CONF_FRAME_STATS]))
     cg.add(var.set_display_test(config[CONF_DISPLAY_TEST]))
+    cg.add(var.set_overview_low_power(config[CONF_OVERVIEW_LOW_POWER]))
     cg.add(var.set_key_interval_ms(config[CONF_KEY_INTERVAL].total_milliseconds))
     cg.add(var.set_splash_name(config[CONF_SPLASH_NAME]))
     cg.add(var.set_splash_subtitle(config[CONF_SPLASH_SUBTITLE]))
