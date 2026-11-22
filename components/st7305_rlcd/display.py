@@ -24,6 +24,8 @@ CONF_REFRESH_RATE = "refresh_rate"
 CONF_TE_PIN = "te_pin"
 CONF_PARTIAL_UPDATES = "partial_updates"
 CONF_SOURCE_VOLTAGE_POSITIVE = "source_voltage_positive"
+CONF_LOW_POWER_REFRESH_RATE = "low_power_refresh_rate"
+LOW_POWER_RATES = {"0.25Hz": 0, "0.5Hz": 1, "1Hz": 2, "2Hz": 3, "4Hz": 4, "8Hz": 5}
 CONF_SOURCE_VOLTAGE_NEGATIVE = "source_voltage_negative"
 REFRESH_RATES = {"16Hz": 32, "25.5Hz": 51, "32Hz": 64, "51Hz": 102}
 
@@ -81,6 +83,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ORIENTATION): cv.enum(ORIENTATIONS, upper=True),
             # Panel refresh in high-power mode (the controller offers 16, 25.5, 32 or 51 Hz).
             cv.Optional(CONF_REFRESH_RATE, default="32Hz"): cv.one_of(*REFRESH_RATES),
+            # Refresh in low-power mode (FRCTRL B2h LFRA, datasheet v0.2 8.2.3): 1 Hz
+            # showed its sweep on the low-power overview.
+            cv.Optional(CONF_LOW_POWER_REFRESH_RATE, default="8Hz"): cv.one_of(*LOW_POWER_RATES),
             # High-power source drive (VSHP C1h, VSHN C4h; datasheet v0.2 8.2.11/8.2.13),
             # 0.02 V steps. -3.0 V balances the two 1-dot inversion polarities on our
             # panel at 32 Hz: Waveshare's -4.0 V left a fine checkerboard over black and
@@ -119,6 +124,7 @@ async def to_code(config):
     cg.add(var.set_model(config[CONF_MODEL]))
     cg.add(var.set_partial_updates(config[CONF_PARTIAL_UPDATES]))
     cg.add(var.set_refresh_hz_x2(REFRESH_RATES[config[CONF_REFRESH_RATE]]))
+    cg.add(var.set_low_power_rate(LOW_POWER_RATES[config[CONF_LOW_POWER_REFRESH_RATE]]))
     cg.add(var.set_source_voltages(
         round((config[CONF_SOURCE_VOLTAGE_POSITIVE] - 3.7) / 0.02),
         round((-2.5 - config[CONF_SOURCE_VOLTAGE_NEGATIVE]) / 0.02),
