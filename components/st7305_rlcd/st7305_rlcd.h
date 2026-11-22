@@ -70,6 +70,12 @@ class ST7305RLCD : public display::DisplayBuffer,
   void set_orientation(ST7305Orientation orientation) { this->orientation_ = orientation; }
   /// High-power refresh in half-hertz: 32 (16 Hz), 51 (25.5), 64 (32) or 102 (51).
   void set_refresh_hz_x2(uint8_t hz_x2) { this->refresh_hz_x2_ = hz_x2; }
+  /* High-power source voltages as register codes: VSHP C1h (3.7 V + 0.02 V * code),
+     VSHN C4h (-2.5 V - 0.02 V * code). */
+  void set_source_voltages(uint8_t vshp, uint8_t vshn) {
+    this->vshp_ = vshp;
+    this->vshn_ = vshn;
+  }
 
   /// Enter sleep mode (lowest power, display blanks, RAM retained)
   void sleep();
@@ -177,6 +183,8 @@ class ST7305RLCD : public display::DisplayBuffer,
   uint16_t width_{400};
   uint16_t height_{300};
   uint8_t refresh_hz_x2_{64};
+  uint8_t vshp_{0x69};  // +5.80 V
+  uint8_t vshn_{0x19};  // -3.00 V
   size_t buffer_size_{15000};
 
   // Address window parameters (panel-specific)

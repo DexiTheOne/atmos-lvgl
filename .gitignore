@@ -7,3 +7,7 @@ esphome/*.log
 # Review sheets and GIFs: regenerate with desktop/render_review.py.
 artifacts/
 .esphome/
+
+# Local hardware reference (third-party, ST7305 datasheet is confidential)
+reference/*
+!reference/README.md

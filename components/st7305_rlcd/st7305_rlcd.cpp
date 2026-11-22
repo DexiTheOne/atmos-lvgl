@@ -341,12 +341,10 @@ void ST7305RLCD::init_display_() {
   this->send_data_(0x11);
   this->send_data_(0x04);
 
-  // VSHP Setting - Positive source voltage (high power mode)
+  // VSHP Setting - Positive source voltage (high power mode), source_voltage_positive
   this->send_command_(0xC1);
-  this->send_data_(0x69);
-  this->send_data_(0x69);
-  this->send_data_(0x69);
-  this->send_data_(0x69);
+  for (int i = 0; i < 4; i++)
+    this->send_data_(this->vshp_);
 
   // VSLP Setting - Positive source voltage (low power mode)
   this->send_command_(0xC2);
@@ -355,12 +353,12 @@ void ST7305RLCD::init_display_() {
   this->send_data_(0x19);
   this->send_data_(0x19);
 
-  // VSHN Setting - Negative source voltage (high power mode)
+  // VSHN Setting - Negative source voltage (high power mode), source_voltage_negative.
+  // Waveshare's 0x4B (-4.0 V) left the 1-dot inversion polarities unbalanced (a fine
+  // checkerboard over black); 0x19 (-3.0 V) balances them on our panel.
   this->send_command_(0xC4);
-  this->send_data_(0x4B);
-  this->send_data_(0x4B);
-  this->send_data_(0x4B);
-  this->send_data_(0x4B);
+  for (int i = 0; i < 4; i++)
+    this->send_data_(this->vshn_);
 
   // VSLN Setting - Negative source voltage (low power mode)
   this->send_command_(0xC5);
