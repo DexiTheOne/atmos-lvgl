@@ -44,6 +44,10 @@ class AtmosComponent : public Component {
   /* Display test: skip the UI and LVGL; draw a counter and a moving box straight into
      the 1-bit frame at frame_period, to measure the panel path (convert + SPI push). */
   void set_display_test(bool on) { this->display_test_ = on; }
+  /* Panel test: stop rendering and pushing; the panel keeps refreshing the last frame
+     from its own memory. Active time is frozen; unfreezing resumes without a jump. */
+  void set_frozen(bool on, bool low_power = true);
+  bool frozen() const { return this->frozen_; }
   void set_key_interval_ms(uint32_t ms) { this->key_interval_ms_ = ms; }
   void set_splash_name(const char *name) { this->splash_name_ = name; }
   void set_splash_subtitle(const char *text) { this->splash_subtitle_ = text; }
@@ -123,6 +127,9 @@ class AtmosComponent : public Component {
   PartCost parts_[6];
   void test_frame_();
   bool display_test_{false};
+  bool frozen_{false};
+  bool freeze_lpm_{false};   // enter Low Power Mode once the last frame is out
+  bool in_lpm_{false};
   void test_draw_();
   void test_report_();
   uint32_t test_count_{0};

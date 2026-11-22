@@ -823,6 +823,18 @@ void ST7305RLCD::high_power_mode() {
   ESP_LOGD(TAG, "Switched to high power mode");
 }
 
+bool ST7305RLCD::command(uint8_t cmd, const uint8_t *data, size_t len) {
+  if (this->busy_ || this->armed_)
+    return false;
+  this->cs_->digital_write(false);
+  this->transmit_(&cmd, 1, false);
+  for (size_t i = 0; i < len; i++)
+    this->transmit_(data + i, 1, true);
+  this->cs_->digital_write(true);
+  ESP_LOGI(TAG, "panel command %02Xh (%u data bytes)", cmd, (unsigned) len);
+  return true;
+}
+
 void ST7305RLCD::display_on() {
   this->send_command_(0x29);  // Display On
   ESP_LOGD(TAG, "Display on");

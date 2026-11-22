@@ -79,6 +79,9 @@ class ST7305RLCD : public display::DisplayBuffer,
   void low_power_mode();
   /// Switch to high power refresh (~51Hz) for animations
   void high_power_mode();
+  /* Panel test: send a raw command with data. Refused (false) while a push is queued
+     or running; call it with frames stopped (atmos freeze). */
+  bool command(uint8_t cmd, const uint8_t *data, size_t len);
   /// Turn display on (recover from display_off)
   void display_on();
   /// Turn display off (RAM retained, instant recovery)

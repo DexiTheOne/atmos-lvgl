@@ -413,7 +413,34 @@ void AtmosComponent::on_display_event_(lv_event_code_t code) {
 /* Frames are driven by a scheduler timeout rather than loop(): the main loop task sleeps
    until the next frame is due, so Wi-Fi, the API and sensors get the CPU between frames
    and a frame never starts earlier than its period (the frame-rate cap). */
+void AtmosComponent::set_frozen(bool on, bool low_power) {
+  if (on == this->frozen_)
+    return;
+  this->frozen_ = on;
+  this->freeze_lpm_ = on && low_power;
+  if (!on && this->in_lpm_ && this->panel_ != nullptr) {
+    this->panel_->high_power_mode();  // no push is running while frozen
+    this->in_lpm_ = false;
+  }
+  ESP_LOGI(TAG, "frames %s", on ? "frozen (panel holds the last frame)" : "resumed");
+}
+
 void AtmosComponent::frame_() {
+  if (this->frozen_ && !this->pending_) {
+    // Hold: no model step, render or push (a frame still waiting goes out first).
+    // Restart step timing when resuming, so the model does not catch up the frozen time.
+    this->next_step_us_ = micros() + this->period_us_;
+    if (this->panel_ != nullptr && this->panel_->has_te())
+      this->last_target_ = this->panel_->te_count();
+    // Latch the held frame: Low Power Mode refreshes from panel memory at the slow
+    // rate (FRCTRL LFRA) with the low-power source voltages, once the push is done.
+    if (this->freeze_lpm_ && !this->in_lpm_ && this->panel_ != nullptr && !this->panel_->busy()) {
+      this->panel_->low_power_mode();
+      this->in_lpm_ = true;
+    }
+    this->set_timeout("frame", 20, [this]() { this->frame_(); });
+    return;
+  }
   if (this->te_frames_) {
     this->frame_te_();
     return;
