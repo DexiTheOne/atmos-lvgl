@@ -660,6 +660,8 @@ void ST7305RLCD::push_task_(void *arg) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     if (self->switch_now_) {
       self->switch_now_ = false;
+      if (self->switch_delay_us_ >= 1000)
+        vTaskDelay(pdMS_TO_TICKS(self->switch_delay_us_ / 1000));
       self->set_high_power_slow(true);
       self->high_power_mode();
       self->busy_ = false;
