@@ -622,9 +622,13 @@ void ST7305RLCD::start_push_task_() {
 void IRAM_ATTR ST7305RLCD::te_isr_(ST7305RLCD *self) {
   uint32_t now = micros();
   uint32_t dt = now - self->te_time_us_;
-  if (self->te_count_ > 1 && dt > 5000 && dt < 200000)
+  // Refresh period EMA from high-power gaps only (16 Hz, the slowest, is 62.5 ms):
+  // low-power refreshes (8 Hz and slower) and the switch between modes left gaps near
+  // 100 ms that pulled it to 10 Hz, and the model, stepped by it, ran 3.4x fast.
+  bool hpm_gap = dt > 5000 && dt < 80000;
+  if (self->te_count_ > 1 && hpm_gap)
     self->te_period_q4_ += (int32_t) (dt * 16 - self->te_period_q4_) / 16;  // EMA, 1/16
-  else if (self->te_count_ == 1 && dt > 5000 && dt < 200000)
+  else if (self->te_count_ == 1 && hpm_gap)
     self->te_period_q4_ = dt * 16;
   self->te_gap_us_ = dt;
   self->te_time_us_ = now;
