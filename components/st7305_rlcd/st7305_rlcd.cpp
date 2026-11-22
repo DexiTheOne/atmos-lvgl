@@ -33,6 +33,7 @@ static const char *const TAG = "st7305_rlcd";
 // =============================================================================
 
 void ST7305RLCD::setup() {
+  this->te_gap_max_us_ = 3000000u / this->refresh_hz_x2_;  // 1.5 * 2e6 / hz_x2
   ESP_LOGCONFIG(TAG, "Setting up ST7305 RLCD...");
 
   // Apply model-specific settings
@@ -623,10 +624,10 @@ void ST7305RLCD::start_push_task_() {
 void IRAM_ATTR ST7305RLCD::te_isr_(ST7305RLCD *self) {
   uint32_t now = micros();
   uint32_t dt = now - self->te_time_us_;
-  // Refresh period EMA from high-power gaps only (16 Hz, the slowest, is 62.5 ms):
-  // low-power refreshes (8 Hz and slower) and the switch between modes left gaps near
-  // 100 ms that pulled it to 10 Hz, and the model, stepped by it, ran 3.4x fast.
-  bool hpm_gap = dt > 5000 && dt < 80000;
+  // Refresh period EMA from gaps near the configured rate only (under 1.5 nominal
+  // periods): low-power refreshes and mode switches left gaps near 100 ms that pulled
+  // it to 10 Hz, and the model, stepped by it, ran 3.4x fast.
+  bool hpm_gap = dt > 5000 && dt < self->te_gap_max_us_;
   if (self->te_count_ > 1 && hpm_gap)
     self->te_period_q4_ += (int32_t) (dt * 16 - self->te_period_q4_) / 16;  // EMA, 1/16
   else if (self->te_count_ == 1 && hpm_gap)
@@ -840,6 +841,13 @@ bool ST7305RLCD::command(uint8_t cmd, const uint8_t *data, size_t len) {
     snprintf(hex + 3 * i, 4, " %02X", data[i]);
   ESP_LOGI(TAG, "panel command %02Xh:%s", cmd, hex);
   return true;
+}
+
+void ST7305RLCD::set_high_power_slow(bool slow) {
+  bool fast = this->refresh_hz_x2_ == 102 || this->refresh_hz_x2_ == 64;
+  uint8_t fr = (fast && !slow ? 0x10 : 0x00) | this->lfra_;
+  this->send_command_(0xB2);
+  this->send_data_(fr);
 }
 
 void ST7305RLCD::display_on() {

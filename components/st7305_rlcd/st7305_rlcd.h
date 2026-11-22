@@ -89,6 +89,10 @@ class ST7305RLCD : public display::DisplayBuffer,
   void low_power_mode();
   /// Switch to high power refresh (~51Hz) for animations
   void high_power_mode();
+  /* High-power refresh at the slower of the oscillator's two rates (16 or 25.5 Hz)
+     instead of the configured fast one (32 or 51 Hz); no effect for a slow refresh_rate.
+     Only between pushes. */
+  void set_high_power_slow(bool slow);
   /* Panel test: send a raw command with data. Refused (false) while a push is queued
      or running; call it with frames stopped (atmos freeze). */
   bool command(uint8_t cmd, const uint8_t *data, size_t len);
@@ -178,6 +182,7 @@ class ST7305RLCD : public display::DisplayBuffer,
   volatile uint32_t push_bytes_{0}, pushes_{0};
   volatile int32_t te_period_q4_{0};
   volatile uint32_t te_gap_us_{0};
+  uint32_t te_gap_max_us_{47000};  // 1.5 nominal high-power periods
   PushRecord done_{};
 
   GPIOPin *dc_pin_{nullptr};

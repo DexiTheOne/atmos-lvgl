@@ -141,7 +141,8 @@ class AtmosComponent : public Component {
   bool in_lpm_{false};
   bool overview_lpm_{true};
   bool parked_lpm_{false};   // overview parked in low-power mode, untimed frames
-  bool leaving_lpm_{false};  // 38h sent; untimed until high-power TE pulses return
+  bool leaving_lpm_{false};  // 38h sent; animation held until high-power TE pulses return
+  bool slow_repaint_{false}; // first high-power refresh at 16 Hz, not yet done
   uint32_t leave_te_{0};
   uint32_t leave_us_{0};
   void resume_te_frames_();
