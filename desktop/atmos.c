@@ -3094,6 +3094,7 @@ void atmos_select_reading(int r){
     auto_select(s,reading_item[r]);age=0;pending_advance=0;
     atmos_set_scene(s);
 }
+bool atmos_overview_still(void){return scene==0 && !moving && !settings_showing();}
 float atmos_overview_hold_left(void){
     if(scene!=0 || moving || paused || hidden || (dark_mode() && (automatic || dark_parked)))return -1;
     if(dark_parked)return lit_wait?LV_MAX(0.0f,(float)(hold-age)):hold;  /* lit again */

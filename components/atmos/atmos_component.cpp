@@ -480,7 +480,7 @@ static const float LPM_LEAD_S = 0.35f;
 bool AtmosComponent::park_low_power_() {
   auto *p = this->panel_;
   float left = atmos_overview_hold_left();
-  if (!this->overview_lpm_ || this->frozen_ || this->pending_ || atmos_scene() != 0 || atmos_is_moving() ||
+  if (!this->overview_lpm_ || this->frozen_ || this->pending_ || !atmos_overview_still() ||
       (left >= 0 && left < 2 * LPM_LEAD_S) || p->busy() || p->has_unsent())
     return false;
   p->low_power_mode();
@@ -571,10 +571,10 @@ void AtmosComponent::frame_() {
     uint32_t step_start = micros();
     atmos_step(steps * this->period_us_ / 1e6);
     step_us = micros() - step_start;
-    // Leave before the exit, or LPM_LEAD_S ahead of a timed one, so the panel's repaint
+    // Leave before the exit (another scene, a transition, the settings page), or LPM_LEAD_S ahead of a timed one, so the panel's repaint
     // at high power (a lighter sweep, the panel's own) is done before the motion starts.
     float left = atmos_overview_hold_left();
-    if (this->parked_lpm_ && (atmos_scene() != 0 || atmos_is_moving() || (left >= 0 && left < LPM_LEAD_S)))
+    if (this->parked_lpm_ && (!atmos_overview_still() || (left >= 0 && left < LPM_LEAD_S)))
       this->leave_low_power_();
     pre = atmos_step_prerendered();
     if (pre >= 0) {

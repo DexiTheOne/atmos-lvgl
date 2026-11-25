@@ -292,6 +292,7 @@ void atmos_settings_key(void){
     ui_redraw_page();ui_invalidate();
 }
 bool atmos_settings_open(void){return open_;}
+bool settings_showing(void){return open_ || pos>0;}
 
 int atmos_poll_setting(void){
     if(!changed)return -1;

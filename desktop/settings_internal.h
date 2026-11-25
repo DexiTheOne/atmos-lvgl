@@ -8,7 +8,8 @@
 bool settings_draw(void);            /* draws the frame while the sheet shows; false otherwise */
 bool settings_step(double dt);       /* advances the slide; true while the page behind is frozen */
 void settings_transition_done(void); /* a page transition ended: apply a queued press */
-bool settings_move(int direction);   /* left/right key; true when the settings page took it */
+bool settings_move(int direction);
+bool settings_showing(void);         /* the sheet is down or sliding */   /* left/right key; true when the settings page took it */
 
 /* atmos.c, for settings.c. Coordinates are screen pixels, shifted by ui_set_offset(). */
 void ui_header(const char *title,const char *badge); /* page title, rule, rating box (badge) and Wi-Fi box */

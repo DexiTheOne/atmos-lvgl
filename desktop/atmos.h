@@ -149,6 +149,10 @@ float atmos_hold(void);
    by itself (automatic cycling, or lit again after a low-light park); -1 when it will
    not leave on its own (manual, parked in low light, paused, moving, another scene). */
 float atmos_overview_hold_left(void);
+/* True while the still overview is what the display shows: not in a transition and
+   without the settings page over it. The device parks the panel in low power only
+   then, and leaves low power as soon as it turns false. */
+bool atmos_overview_still(void);
 /* Time span the history charts show. Shrinking it discards older samples; growing it
    lets the chart fill up to the new span. Samples start every 2 s and stretch up to span/60 as history accumulates. */
 #define ATMOS_HISTORY_MIN 60.0f
