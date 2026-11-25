@@ -354,7 +354,7 @@ binary_sensor:
   # no internal pull, so it stays high impedance).
   - platform: gpio
     id: key_settings
-    internal: true
+    name: Settings Key  # shows in Home Assistant and the log: is GPIO1 pressed?
     pin:
       number: GPIO1
       inverted: true
