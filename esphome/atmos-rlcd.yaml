@@ -298,7 +298,7 @@ number:
           then:
             - script.execute: play_alert
 
-# Status LEDs: 4 WS2812B on GPIO1. atmos_led is the Home Assistant light (power and
+# Status LEDs: 4 WS2812B on GPIO2. atmos_led is the Home Assistant light (power and
 # brightness only) and sets the colour from the rating on screen, fading out and in
 # with each page transition.
 light:
@@ -307,7 +307,7 @@ light:
     internal: true  # colours only; Home Assistant sees the Status LEDs light below
     chipset: WS2812
     rgb_order: GRB
-    pin: GPIO1
+    pin: GPIO2  # not U0TXD: boot UART output flashed the LEDs
     num_leds: 4
     restore_mode: ALWAYS_OFF  # dark until atmos_led sets a colour (on would flash white at boot)
 
@@ -350,13 +350,13 @@ binary_sensor:
       - delayed_off: 20ms
     on_press:
       - atmos.next
-  # Settings key on GPIO2 (active low, pulled up externally: the pin is input only,
+  # Settings key on GPIO1 (active low, pulled up externally: the pin is input only,
   # no internal pull, so it stays high impedance).
   - platform: gpio
     id: key_settings
     internal: true
     pin:
-      number: GPIO2
+      number: GPIO1
       inverted: true
       mode:
         input: true
