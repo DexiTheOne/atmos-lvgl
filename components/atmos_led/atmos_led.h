@@ -43,6 +43,7 @@ class AtmosLed : public Component, public light::LightOutput {
  protected:
   static constexpr float BOOT_PERIOD_S = 3.2f;     // one round trip of the bright glow
   static constexpr float BOOT_GLOW_WIDTH = 0.8f;   // bright glow's spread, in LEDs
+  static constexpr float BOOT_BACKGROUND = 0.35f;  // soft background, as a share of the light's level
   static constexpr uint32_t HANDOFF_MS = 1500;     // glow settles, then fades into the page
   static constexpr int MAX_LEDS = 16;
   uint32_t target_() const;

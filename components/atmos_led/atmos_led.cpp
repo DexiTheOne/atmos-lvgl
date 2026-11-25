@@ -184,11 +184,12 @@ void AtmosLed::loop() {
     // Rise from dark over the first second after power-up.
     float rise = now < 1000 ? now / 1000.0f : 1.0f;
     for (int led = 0; led < n; led++) {
-      // The background is the boot colour at the light's level (brightness slider and
+      // The background is the boot colour at a fraction of the light's level (brightness slider and
       // auto-dimming); the bright glow rises from it to full brightness, whatever the
       // level, while the light is on.
       float glow = level > 0.0f ? this->boot_k_[led] * (1.0f - settle) : 0.0f;
-      float k = level + (1.0f - level) * glow;
+      float bg = level * BOOT_BACKGROUND;  // below full, so the glow shows at any level
+      float k = bg + (1.0f - bg) * glow;
       uint8_t c[3];
       for (int i = 0; i < 3; i++)
         c[i] = this->encode_((boot[i] * k * (1.0f - fade) + goal[i] * level * fade) * rise);
