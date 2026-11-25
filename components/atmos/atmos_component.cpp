@@ -718,16 +718,16 @@ void AtmosComponent::sync_device_settings_() {
   atmos_set_setting_text(ATMOS_SETTING_WIFI_STATUS, connected ? "Connected" : "Disconnected");
   char ssid[wifi::SSID_BUFFER_SIZE];
   atmos_set_setting_text(ATMOS_SETTING_WIFI_SSID, connected ? wifi->wifi_ssid_to(ssid) : "--");
-  std::string ip = "--";
+  char ip[network::IP_ADDRESS_BUFFER_SIZE] = "--";
   if (connected) {
     for (auto &address : wifi->wifi_sta_ip_addresses()) {
       if (address.is_ip4() && address.is_set()) {
-        ip = address.str();
+        address.str_to(ip);
         break;
       }
     }
   }
-  atmos_set_setting_text(ATMOS_SETTING_IP_ADDRESS, ip.c_str());
+  atmos_set_setting_text(ATMOS_SETTING_IP_ADDRESS, ip);
 #else
   atmos_set_setting_shown(ATMOS_SETTING_WIFI_SIGNAL, false);
   atmos_set_setting_shown(ATMOS_SETTING_WIFI_STATUS, false);
