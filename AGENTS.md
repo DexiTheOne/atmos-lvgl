@@ -7,6 +7,7 @@ The root `index.html`, `app.js`, `style.css`, and `server.mjs` are the original 
 ## Code map
 
 - `desktop/atmos.c`: platform-independent C UI, LVGL drawing, sensor simulation, history, scene navigation, and transition composition.
+- `desktop/settings.c`, `desktop/settings_internal.h`: the settings page (hardware test of the GPIO2 settings key, `atmos.settings` action): drops in from the top over the frozen page, slides back up to close. Kept apart from `atmos.c`, which exposes only the `ui_*` hooks in `settings_internal.h`.
 - `desktop/atmos.h`: UI/model interface, including `atmos_set_readings()` for real sensor data.
 - `desktop/main_win32.c`: Windows window, input, frame presentation, snapshots, and native render/presentation verification.
 - `desktop/lv_conf.h`: LVGL configuration mirroring what ESPHome generates (see ESPHome integration).
@@ -61,6 +62,7 @@ If the executable is locked during linking, close only this project's simulator 
 | `,` and `.` | The device's left/right keys: previous/next underlined reading, then previous/next page (`atmos_advance()`) |
 | Space | Pause motion and history sampling |
 | A | Toggle automatic cycling |
+| G | Settings key: open/close the settings page |
 | P | Toggle alert focus (cycle only alerting readings) |
 | M | Toggle alert sounds (on at start; need alert focus). `--alert-focus`, `--alert-enter=s`, `--alert-leave=s`, `--alert-cooldown=s` |
 | W | Step the badge's Wi-Fi icon: 3, 2, 1, 0 bars, disconnected (start state `--wifi=n`, -1 disconnected) |

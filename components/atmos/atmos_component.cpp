@@ -140,6 +140,10 @@ void AtmosComponent::advance(int direction) {
     return;
   this->key_pressed_ = true;
   this->last_key_ms_ = now;
+  if (direction == 0) {  // the settings key opens or closes the settings page
+    atmos_toggle_settings();
+    return;
+  }
   int before = this->shown_();
   atmos_advance(direction);
   // During a transition the press waits for the arriving page; adopt the reading it moves to.

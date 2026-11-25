@@ -350,3 +350,18 @@ binary_sensor:
       - delayed_off: 20ms
     on_press:
       - atmos.next
+  # Settings key on GPIO2 (active low, pulled up externally: the pin is input only,
+  # no internal pull, so it stays high impedance).
+  - platform: gpio
+    id: key_settings
+    internal: true
+    pin:
+      number: GPIO2
+      inverted: true
+      mode:
+        input: true
+    filters:
+      - delayed_on: 20ms
+      - delayed_off: 20ms
+    on_press:
+      - atmos.settings

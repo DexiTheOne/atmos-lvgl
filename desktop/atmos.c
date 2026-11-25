@@ -1,4 +1,5 @@
 #include "atmos.h"
+#include "settings_internal.h"
 #if LVGL_VERSION_MAJOR!=9
 #error "atmos requires LVGL 9.x"
 #endif
@@ -657,6 +658,17 @@ static void detail_header(const char *title,const char *badge){
     rect(UI_WIFI_BOX_X,UI_PM_HEADER_Y,UI_WIFI_BOX_W,UI_BADGE_HEIGHT,false,0);
     wifi_icon();
     dashboard_text(badge,text_x,text_y,badge_size,true);
+}
+/* Settings (hardware test for now): the shared header, titled, with only the Wi-Fi box. */
+/* Hooks for settings.c (settings_internal.h). */
+void ui_wifi_header(const char *title){
+    lv_area_t ink=header_ink_bounds(title,dashboard_font(UI_FONT_TITLE));
+    lv_area_t caps=header_ink_bounds("H",dashboard_font(UI_FONT_TITLE));
+    int title_y=UI_PM_HEADER_Y+(UI_BADGE_HEIGHT-(caps.y2-caps.y1+1))/2-caps.y1;
+    dashboard_text(title,UI_MARGIN-ink.x1,title_y,UI_FONT_TITLE,false);
+    rect(UI_MARGIN,UI_HEADER_BOTTOM,UI_WIDTH-2*UI_MARGIN,UI_DIVIDER,false,0);
+    rect(UI_WIFI_BOX_X,UI_PM_HEADER_Y,UI_WIFI_BOX_W,UI_BADGE_HEIGHT,false,0);
+    wifi_icon();
 }
 static void dashboard_header(void){
     detail_header("AIR QUALITY",rating_text(rate_overall()));
@@ -2549,6 +2561,7 @@ static void draw(lv_event_t *event){
 }
 static void draw_frame(lv_event_t *event){
     lv_layer_t *output=lv_event_get_layer(event);layer=output;offset=0;transition_drawn=false;
+    if(settings_draw())return;
     if(!moving){
         anim_t=t;
         lv_area_t box=animated_area(scene);
@@ -2873,7 +2886,17 @@ static void prerender_step(void){
     if(pre_stage==2)prepare_effect(scene,to); /* anchors from the finished outgoing snapshot */
     prerendered_last_step=which;anim_t=t;pre_stage++;
 }
+void ui_fill(int x,int y,int w,int h,bool ink){rect(x,y,w,h,!ink,0);}
+void ui_invert(int x,int y,int w,int h){direct_fill(x,y+(int)offset,w,h,FILL_INVERT);}
+void ui_set_offset(int y){offset=(float)y;}
+void ui_draw_page_behind(void){anim_t=t;draw_scene(scene);}
+bool ui_dark(void){return theme!=ATMOS_THEME_LIGHT;}
+bool ui_moving(void){return moving;}
+void ui_invalidate(void){if(surface)lv_obj_invalidate(surface);}
+void ui_redraw_page(void){full_dirty=true;snapshots_ready=false;}
+void ui_flush_dirty(void){if(full_dirty || dirty_bands){ui_invalidate();full_dirty=false;dirty_bands=0;}}
 void atmos_step(double dt){
+    if(settings_step(paused || hidden?0:dt))return;
     if(paused || hidden || dt<=0)return;
     /* Limit catch-up after suspension; normal operation advances at active time. */
     dt=fmin(dt,.1f);t+=dt;prerendered_last_step=-1;
@@ -2915,7 +2938,8 @@ void atmos_step(double dt){
             /* Reset the next page now, before its snapshot is pre-rendered, so
                automatic cycling arrives on its first reading. */
             if(automatic)prepare_next(auto_next(scene));
-            if(queued>=0){int requested=queued;queued=-1;atmos_set_scene(requested);}}
+            if(queued>=0){int requested=queued;queued=-1;atmos_set_scene(requested);}
+            if(!moving)settings_transition_done();}
     }else{age+=dt;
         if(automatic){
             /* Split the hold evenly between this hold's items, stepping forward only. */

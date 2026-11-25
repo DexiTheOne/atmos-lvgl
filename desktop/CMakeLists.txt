@@ -16,7 +16,7 @@ set(ATMOS_ALERT_WAV "${CMAKE_CURRENT_SOURCE_DIR}/../esphome/sounds/alert.wav")
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sounds.rc" "1 WAVE \"${ATMOS_ALERT_WAV}\"
 ")
 set_source_files_properties("${CMAKE_CURRENT_BINARY_DIR}/sounds.rc" PROPERTIES OBJECT_DEPENDS "${ATMOS_ALERT_WAV}")
-add_executable(atmos main_win32.c atmos.c ui_fonts.c "${CMAKE_CURRENT_BINARY_DIR}/sounds.rc")
+add_executable(atmos main_win32.c atmos.c settings.c ui_fonts.c "${CMAKE_CURRENT_BINARY_DIR}/sounds.rc")
 target_link_libraries(atmos PRIVATE lvgl gdi32 user32 winmm m)
 target_compile_options(atmos PRIVATE -Wall -Wextra -Werror)
 enable_testing()

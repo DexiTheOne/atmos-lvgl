@@ -155,6 +155,7 @@ static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM key,LPARAM data)
         else if(key==VK_TAB || key==VK_OEM_6)atmos_cycle_pm(1);
         else if(key==VK_OEM_4)atmos_cycle_pm(-1);
         else if(key=='A')atmos_toggle_auto();
+        else if(key=='G')atmos_toggle_settings(); /* the device's settings key (GPIO2) */
         else if(key=='P'){atmos_set_alert_focus(!atmos_alert_focus());update_title();}
         else if(key=='M'){atmos_set_alert_sound(!atmos_alert_sound());update_title();}
         else if(key=='W')atmos_set_wifi(atmos_wifi()<=-1?3:atmos_wifi()-1); /* 3, 2, 1, 0, off */

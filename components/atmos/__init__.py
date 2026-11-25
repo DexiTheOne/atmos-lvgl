@@ -112,7 +112,7 @@ LVGL_VERSION = "9.5.0"
 # The repository root: components/atmos/__init__.py -> ../../desktop. ESPHome clones the
 # whole repository for a git source, so this also works from github://.
 UI_DIR = Path(__file__).resolve().parents[2] / "desktop"
-UI_FILES = ("atmos.c", "atmos.h", "ui_fonts.c", "ui_fonts.h", "ui_theme.h", "splash_badge.h", "lv_conf.h")
+UI_FILES = ("atmos.c", "atmos.h", "settings.c", "settings_internal.h", "ui_fonts.c", "ui_fonts.h", "ui_theme.h", "splash_badge.h", "lv_conf.h")
 
 atmos_ns = cg.esphome_ns.namespace("atmos")
 AtmosComponent = atmos_ns.class_("AtmosComponent", cg.Component)
@@ -418,3 +418,8 @@ async def next_to_code(config, action_id, template_arg, args):
 @automation.register_action("atmos.previous", AdvanceAction, ADVANCE_SCHEMA, synchronous=True)
 async def previous_to_code(config, action_id, template_arg, args):
     return await _advance(config, action_id, template_arg, -1)
+
+# atmos.settings: the settings key. Opens or closes the settings page.
+@automation.register_action("atmos.settings", AdvanceAction, ADVANCE_SCHEMA, synchronous=True)
+async def settings_to_code(config, action_id, template_arg, args):
+    return await _advance(config, action_id, template_arg, 0)

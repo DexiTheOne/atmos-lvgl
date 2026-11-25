@@ -32,6 +32,11 @@ int atmos_page(int position);
 void atmos_set_scenario(int scenario);
 void atmos_toggle_pause(void);
 void atmos_toggle_auto(void);
+/* Settings page (hardware test): open/close over whatever is shown. The model is
+   frozen while it is open; closing resumes the page (a transition restarts). */
+void atmos_set_settings(bool open);
+void atmos_toggle_settings(void);
+bool atmos_settings_open(void);
 void atmos_set_hidden(bool hidden);
 /* Hardware integration: pass measured readings and disable the demo generator. */
 void atmos_set_readings(atmos_readings readings);
