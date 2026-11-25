@@ -116,6 +116,10 @@ atmos:
     name: Alert Sound
   overview_low_light:  # park on the overview in low light (atmos_led auto_dimming sensor)
     name: Overview in Low Light
+  # Device-only rows of the settings page (middle key), each linked to its entity.
+  settings:
+    alert_volume: alert_volume
+    status_leds: status_leds
   alert_enter: 60s
   alert_leave: 3min
   alert_sound_cooldown: 20min  # no repeat sound this soon after a clear
@@ -312,6 +316,7 @@ light:
     restore_mode: ALWAYS_OFF  # dark until atmos_led sets a colour (on would flash white at boot)
 
 atmos_led:
+  id: status_leds
   light_id: status_strip
   reverse: true  # LED 0 is on the right
   name: Status LEDs  # brightness-only light: power and a brightness slider

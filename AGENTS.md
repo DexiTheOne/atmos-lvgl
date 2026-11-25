@@ -1,4 +1,4 @@
-﻿# Project policy: develop the LVGL implementation
+# Project policy: develop the LVGL implementation
 
 The native LVGL application in `desktop/` is the source of truth for the product UI. From now on, implement rendering, layout, animation, navigation, and sensor/history changes there by default. A request to change "the rendering", "preview", "animation", or "UI" means the LVGL simulator unless the user explicitly says otherwise.
 
@@ -7,7 +7,7 @@ The root `index.html`, `app.js`, `style.css`, and `server.mjs` are the original 
 ## Code map
 
 - `desktop/atmos.c`: platform-independent C UI, LVGL drawing, sensor simulation, history, scene navigation, and transition composition.
-- `desktop/settings.c`, `desktop/settings_internal.h`: the settings page (hardware test of the GPIO1 settings key, `atmos.settings` action): drops in from the top over the frozen page, slides back up to close. Kept apart from `atmos.c`, which exposes only the `ui_*` hooks in `settings_internal.h`.
+- `desktop/settings.c`, `desktop/settings_internal.h`: the settings page, opened by the middle key (GPIO1, `atmos.settings` action, `atmos_settings_key()`): a circular list in groups split by 1 px rules (Display, Lighting, Alerts, Sensors, Wi-Fi, then Exit), the header's rating box naming the selected row's group; labels are the Home Assistant entity names. Toggles, unit/theme choices, sliders in quarter steps (History Time, LED Brightness, Alert Volume), the Calibrate CO2 action (with the calibration status) and Wi-Fi information (status, SSID, RSSI, IP address). It drops in from the top over the frozen page and slides back up on Exit; left/right keys move up/down while it is open (`settings_move()` from `atmos_advance()`). Every change is reported by `atmos_poll_setting()`; the component sends it to the matching entity (which saves and publishes it). Device-owned rows follow their entities (`atmos_set_device_setting()`, `atmos_set_setting_text()`), linked in the component's `settings:` YAML (`alert_volume`, `status_leds` (on/off and brightness), `led_auto_dimming`, `co2_calibration`, `co2_calibrate` button, `co2_calibration_status` text sensor); rows without an entity are hidden. Kept apart from `atmos.c`, which exposes only the `ui_*` hooks in `settings_internal.h`.
 - `desktop/atmos.h`: UI/model interface, including `atmos_set_readings()` for real sensor data.
 - `desktop/main_win32.c`: Windows window, input, frame presentation, snapshots, and native render/presentation verification.
 - `desktop/lv_conf.h`: LVGL configuration mirroring what ESPHome generates (see ESPHome integration).
@@ -58,17 +58,18 @@ If the executable is locked during linking, close only this project's simulator 
 | Input | Action |
 |---|---|
 | 1â€“6 | Overview, CO2, gases, formaldehyde, particles, climate |
-| Arrow keys, click, mouse wheel | Navigate |
+| Left / Right arrows | The device's left/right keys (as `,` and `.`); in settings, move up/down |
+| Up arrow | The middle key: open settings, change the selected setting, Exit closes |
+| Down arrow, click, mouse wheel | Navigate |
 | `,` and `.` | The device's left/right keys: previous/next underlined reading, then previous/next page (`atmos_advance()`) |
 | Space | Pause motion and history sampling |
 | A | Toggle automatic cycling |
-| G | Settings key: open/close the settings page |
 | P | Toggle alert focus (cycle only alerting readings) |
 | M | Toggle alert sounds (on at start; need alert focus). `--alert-focus`, `--alert-enter=s`, `--alert-leave=s`, `--alert-cooldown=s` |
 | W | Step the badge's Wi-Fi icon: 3, 2, 1, 0 bars, disconnected (start state `--wifi=n`, -1 disconnected) |
 | U / I | Temperature unit (°C, °F) / pressure unit (hPa, kPa, mmHg, inHg); also `--temp-unit=F`, `--pressure-unit=inHg` |
 | L / O | Toggle low light / overview in low light (`--low-light`, `--overview-dark`) |
-| T | Theme: light, dark (whole frame), inverted (dark body over the light history chart); `--theme=n` (0-2), the `theme` select on the device |
+| T | Theme: light, dark (dark body over the light history chart), inverted (whole frame); `--theme=n` (0-2), the `theme` select on the device |
 | H | Toggle hardware pacing: hold each frame for its measured ESP32-S3 cost (also `--hw-pace`) |
 | F1â€“F5 | Quiet morning, occupied room, cooking, open windows, sensor full scale |
 | `-` / `=` | Halve / double the history span (1 min to 24 h) |

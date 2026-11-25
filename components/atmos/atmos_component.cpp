@@ -1,4 +1,4 @@
-﻿#include "atmos_component.h"
+#include "atmos_component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/log.h"
 #ifdef USE_API
@@ -140,8 +140,12 @@ void AtmosComponent::advance(int direction) {
     return;
   this->key_pressed_ = true;
   this->last_key_ms_ = now;
-  if (direction == 0) {  // the settings key opens or closes the settings page
-    atmos_toggle_settings();
+  if (direction == 0) {  // the middle key: opens settings, then changes the selected one
+    atmos_settings_key();
+    return;
+  }
+  if (atmos_settings_open()) {  // left/right move the settings selection
+    atmos_advance(direction);
     return;
   }
   int before = this->shown_();
@@ -611,7 +615,125 @@ void AtmosComponent::service_(uint32_t &timer_us, uint32_t &publish_us) {
     ESP_LOGI(TAG, "Alert sound: %s", e == ATMOS_EVT_ALERT_START ? "start" : "clear");
     (e == ATMOS_EVT_ALERT_START ? this->alert_start_trigger_ : this->alert_clear_trigger_).trigger();
   }
+  for (int s; (s = atmos_poll_setting()) >= 0;)
+    this->apply_setting_(s);
+  this->sync_device_settings_();
   publish_us = micros() - publish_start;
+}
+
+/* The setting's value as the settings page set it (toggles 0/1, option index, seconds, %). */
+int AtmosComponent::setting_ui_value_(int s) const {
+  switch (s) {
+    case ATMOS_SETTING_AUTO:
+      return atmos_auto();
+    case ATMOS_SETTING_ALERT_FOCUS:
+      return atmos_alert_focus();
+    case ATMOS_SETTING_ALERT_SOUND:
+      return atmos_alert_sound();
+    case ATMOS_SETTING_OVERVIEW_DARK:
+      return atmos_overview_dark();
+    case ATMOS_SETTING_TEMPERATURE_UNIT:
+      return atmos_temperature_unit();
+    case ATMOS_SETTING_PRESSURE_UNIT:
+      return atmos_pressure_unit();
+    case ATMOS_SETTING_THEME:
+      return atmos_theme();
+    case ATMOS_SETTING_HISTORY:
+      return (int) lroundf(atmos_history_window());
+    default:
+      return atmos_device_setting(s);
+  }
+}
+
+/* A change made on the settings page: send it to the entity, which saves and publishes it. */
+void AtmosComponent::apply_setting_(int s) {
+  int v = this->setting_ui_value_(s);
+  ESP_LOGI(TAG, "Settings page: setting %d = %d", s, v);
+  if (s == ATMOS_SETTING_CO2_CALIBRATE) {
+    if (this->calibrate_button_ != nullptr)
+      this->calibrate_button_->press();
+  } else if (this->setting_switch_[s] != nullptr) {
+    if (v)
+      this->setting_switch_[s]->turn_on();
+    else
+      this->setting_switch_[s]->turn_off();
+  } else if (this->setting_select_[s] != nullptr) {
+    this->setting_select_[s]->make_call().set_index(v).perform();
+  } else if (this->setting_number_[s] != nullptr) {
+    this->setting_number_[s]->make_call().set_value(v / this->setting_scale_[s]).perform();
+  }
+#ifdef USE_LIGHT
+  else if (this->setting_light_[s] != nullptr) {
+    auto call = this->setting_light_[s]->make_call();
+    if (s == ATMOS_SETTING_LED_BRIGHTNESS)
+      call.set_brightness(v / 100.0f);
+    else
+      call.set_state(v != 0);
+    call.perform();
+  }
+#endif
+}
+
+/* Device-owned rows follow their entities (changed from Home Assistant or restored);
+   rows without an entity are hidden. */
+void AtmosComponent::sync_device_settings_() {
+  static const int DEVICE_ONLY[] = {ATMOS_SETTING_VOLUME, ATMOS_SETTING_LEDS, ATMOS_SETTING_LED_BRIGHTNESS,
+                                    ATMOS_SETTING_LED_DIMMING, ATMOS_SETTING_CO2_ASC};
+  for (int s : DEVICE_ONLY) {
+    if (this->setting_switch_[s] != nullptr) {
+      atmos_set_device_setting(s, this->setting_switch_[s]->state ? 1 : 0);
+    } else if (this->setting_number_[s] != nullptr) {
+      if (std::isfinite(this->setting_number_[s]->state))
+        atmos_set_device_setting(s, (int) lroundf(this->setting_number_[s]->state * this->setting_scale_[s]));
+    }
+#ifdef USE_LIGHT
+    else if (this->setting_light_[s] != nullptr) {
+      auto &values = this->setting_light_[s]->remote_values;
+      atmos_set_device_setting(s, s == ATMOS_SETTING_LED_BRIGHTNESS ? (int) lroundf(values.get_brightness() * 100.0f)
+                                                                     : (values.is_on() ? 1 : 0));
+    }
+#endif
+    else {
+      atmos_set_setting_shown(s, false);
+    }
+  }
+  // Calibrate CO2: the button, its status text in the row.
+  atmos_set_setting_shown(ATMOS_SETTING_CO2_CALIBRATE, this->calibrate_button_ != nullptr);
+#ifdef USE_TEXT_SENSOR
+  if (this->calibration_status_ != nullptr && this->calibration_status_->has_state())
+    atmos_set_setting_text(ATMOS_SETTING_CO2_CALIBRATE, this->calibration_status_->state.c_str());
+#endif
+  // Wi-Fi: signal, status and address, at most once a second (the texts change slowly).
+  uint32_t now = millis();
+  if (now - this->wifi_text_ms_ < 1000)
+    return;
+  this->wifi_text_ms_ = now;
+#ifdef USE_WIFI
+  auto *wifi = wifi::global_wifi_component;
+  bool connected = wifi != nullptr && wifi->is_connected();
+  char text[24];
+  if (connected)
+    snprintf(text, sizeof text, "%d dBm", (int) wifi->wifi_rssi());
+  atmos_set_setting_text(ATMOS_SETTING_WIFI_SIGNAL, connected ? text : "--");
+  atmos_set_setting_text(ATMOS_SETTING_WIFI_STATUS, connected ? "Connected" : "Disconnected");
+  char ssid[wifi::SSID_BUFFER_SIZE];
+  atmos_set_setting_text(ATMOS_SETTING_WIFI_SSID, connected ? wifi->wifi_ssid_to(ssid) : "--");
+  std::string ip = "--";
+  if (connected) {
+    for (auto &address : wifi->wifi_sta_ip_addresses()) {
+      if (address.is_ip4() && address.is_set()) {
+        ip = address.str();
+        break;
+      }
+    }
+  }
+  atmos_set_setting_text(ATMOS_SETTING_IP_ADDRESS, ip.c_str());
+#else
+  atmos_set_setting_shown(ATMOS_SETTING_WIFI_SIGNAL, false);
+  atmos_set_setting_shown(ATMOS_SETTING_WIFI_STATUS, false);
+  atmos_set_setting_shown(ATMOS_SETTING_WIFI_SSID, false);
+  atmos_set_setting_shown(ATMOS_SETTING_IP_ADDRESS, false);
+#endif
 }
 
 /* Per-transition log line and the periodic report. */

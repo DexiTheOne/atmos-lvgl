@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <string>
 #include <vector>
@@ -12,6 +12,15 @@
 #include "esphome/components/select/select.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/switch/switch.h"
+#ifdef USE_LIGHT
+#include "esphome/components/light/light_state.h"
+#endif
+#ifdef USE_BUTTON
+#include "esphome/components/button/button.h"
+#endif
+#ifdef USE_TEXT_SENSOR
+#include "esphome/components/text_sensor/text_sensor.h"
+#endif
 #include "esphome/core/preferences.h"
 #include "lvgl.h"
 extern "C" {
@@ -72,6 +81,24 @@ class AtmosComponent : public Component {
   // Home Assistant controls. Settings made before the UI starts are applied when it does.
   void set_reading_select(AtmosReadingSelect *s) { this->reading_select_ = s; }
   void set_auto_switch(AtmosAutoSwitch *s) { this->auto_switch_ = s; }
+  /* Settings page rows (ATMOS_SETTING_*) and the entity each one changes. A change on
+     the screen is sent to the entity (which saves it); device-only rows also follow
+     their entity's state, and are hidden without one. scale: UI units per entity unit. */
+  void set_setting_switch(int setting, switch_::Switch *s) { this->setting_switch_[setting] = s; }
+  void set_setting_select(int setting, select::Select *s) { this->setting_select_[setting] = s; }
+  void set_setting_number(int setting, number::Number *n, float scale) {
+    this->setting_number_[setting] = n;
+    this->setting_scale_[setting] = scale;
+  }
+#ifdef USE_LIGHT
+  void set_setting_light(int setting, light::LightState *l) { this->setting_light_[setting] = l; }
+#endif
+#ifdef USE_BUTTON
+  void set_calibrate_button(button::Button *b) { this->calibrate_button_ = b; }
+#endif
+#ifdef USE_TEXT_SENSOR
+  void set_calibration_status(text_sensor::TextSensor *t) { this->calibration_status_ = t; }
+#endif
   void set_alert_sensor(binary_sensor::BinarySensor *s) { this->alert_sensor_ = s; }
   /* Alert hysteresis and sound cooldown (atmos_set_alert_times(), seconds). */
   void set_alert_times(float enter, float leave, float cooldown) {
@@ -192,6 +219,25 @@ class AtmosComponent : public Component {
 
   AtmosReadingSelect *reading_select_{nullptr};
   AtmosAutoSwitch *auto_switch_{nullptr};
+  switch_::Switch *setting_switch_[ATMOS_SETTING_COUNT]{};
+  select::Select *setting_select_[ATMOS_SETTING_COUNT]{};
+  number::Number *setting_number_[ATMOS_SETTING_COUNT]{};
+  float setting_scale_[ATMOS_SETTING_COUNT]{};
+#ifdef USE_LIGHT
+  light::LightState *setting_light_[ATMOS_SETTING_COUNT]{};
+#endif
+#ifdef USE_BUTTON
+  button::Button *calibrate_button_{nullptr};
+#else
+  void *calibrate_button_{nullptr};
+#endif
+#ifdef USE_TEXT_SENSOR
+  text_sensor::TextSensor *calibration_status_{nullptr};
+#endif
+  uint32_t wifi_text_ms_{0};
+  int setting_ui_value_(int setting) const;
+  void apply_setting_(int setting);
+  void sync_device_settings_();
   binary_sensor::BinarySensor *alert_sensor_{nullptr};
   Trigger<> alert_start_trigger_, alert_clear_trigger_;
   int pending_reading_{-1}, published_option_{-1};

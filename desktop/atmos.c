@@ -660,16 +660,8 @@ static void detail_header(const char *title,const char *badge){
     dashboard_text(badge,text_x,text_y,badge_size,true);
 }
 /* Settings (hardware test for now): the shared header, titled, with only the Wi-Fi box. */
-/* Hooks for settings.c (settings_internal.h). */
-void ui_wifi_header(const char *title){
-    lv_area_t ink=header_ink_bounds(title,dashboard_font(UI_FONT_TITLE));
-    lv_area_t caps=header_ink_bounds("H",dashboard_font(UI_FONT_TITLE));
-    int title_y=UI_PM_HEADER_Y+(UI_BADGE_HEIGHT-(caps.y2-caps.y1+1))/2-caps.y1;
-    dashboard_text(title,UI_MARGIN-ink.x1,title_y,UI_FONT_TITLE,false);
-    rect(UI_MARGIN,UI_HEADER_BOTTOM,UI_WIDTH-2*UI_MARGIN,UI_DIVIDER,false,0);
-    rect(UI_WIFI_BOX_X,UI_PM_HEADER_Y,UI_WIFI_BOX_W,UI_BADGE_HEIGHT,false,0);
-    wifi_icon();
-}
+/* Hook for settings.c (settings_internal.h). */
+void ui_header(const char *title,const char *badge){detail_header(title,badge);}
 static void dashboard_header(void){
     detail_header("AIR QUALITY",rating_text(rate_overall()));
 }
@@ -2042,7 +2034,7 @@ static void draw_gas_detail(void){
     gas_chart(gas_selected?3:2,UI_CHART_TOP);
 }
 /* Themes, applied by inverting after drawing (whatever the clip area redrew):
-   ATMOS_THEME_DARK inverts the whole frame; ATMOS_THEME_INVERTED inverts everything
+   ATMOS_THEME_INVERTED inverts the whole frame; ATMOS_THEME_DARK inverts everything
    above the history panel (the whole overview), keeping the panel's look: a dark
    body over the light chart. */
 static int theme;
@@ -2050,7 +2042,7 @@ void atmos_set_theme(int t){theme=t<0||t>=ATMOS_THEME_COUNT?0:t;full_dirty=true;
 int atmos_theme(void){return theme;}
 static void dark_invert(int which){
     if(theme==ATMOS_THEME_LIGHT)return;
-    int h=which==0 || theme==ATMOS_THEME_DARK?UI_HEIGHT:UI_HISTORY_PANEL_Y;
+    int h=which==0 || theme==ATMOS_THEME_INVERTED?UI_HEIGHT:UI_HISTORY_PANEL_Y;
     direct_fill(0,(int)offset,UI_WIDTH,h,FILL_INVERT);
 }
 static void draw_scene(int which){
@@ -2886,6 +2878,11 @@ static void prerender_step(void){
     if(pre_stage==2)prepare_effect(scene,to); /* anchors from the finished outgoing snapshot */
     prerendered_last_step=which;anim_t=t;pre_stage++;
 }
+void ui_text(const char *text,int x,int y,int size,bool paper){dashboard_text(text,x,y,size,paper);}
+void ui_text_ink(const char *text,int size,int box[4]){
+    lv_area_t a=header_ink_bounds(text,dashboard_font(size));box[0]=a.x1;box[1]=a.y1;box[2]=a.x2;box[3]=a.y2;
+}
+void ui_pill(int x,int y,int w,int h,int radius,bool ink){pill(x,y,w,h,radius,!ink);}
 void ui_fill(int x,int y,int w,int h,bool ink){rect(x,y,w,h,!ink,0);}
 void ui_invert(int x,int y,int w,int h){direct_fill(x,y+(int)offset,w,h,FILL_INVERT);}
 void ui_set_offset(int y){offset=(float)y;}
@@ -3023,10 +3020,11 @@ static void drain_advances(void){
 }
 void atmos_advance(int direction){
     direction=direction<0?-1:1;
+    if(settings_move(direction))return;
     if(moving || pending_advance || selection_blending()){pending_advance+=direction;return;}
     key_speed=1;advance_now(direction);
 }
-void atmos_navigate(int direction){atmos_set_scene(cycle_next(queued>=0?queued:moving?destination:scene,direction));}
+void atmos_navigate(int direction){if(settings_move(direction<0?-1:1))return;atmos_set_scene(cycle_next(queued>=0?queued:moving?destination:scene,direction));}
 void atmos_set_scenario(int value){
     if(value<0 || value>=(int)(sizeof profiles/sizeof profiles[0]))return;
     scenario=value;origin=sensor;target=profiles[value];changed=t;external_data=false;

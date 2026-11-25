@@ -8,9 +8,13 @@
 bool settings_draw(void);            /* draws the frame while the sheet shows; false otherwise */
 bool settings_step(double dt);       /* advances the slide; true while the page behind is frozen */
 void settings_transition_done(void); /* a page transition ended: apply a queued press */
+bool settings_move(int direction);   /* left/right key; true when the settings page took it */
 
 /* atmos.c, for settings.c. Coordinates are screen pixels, shifted by ui_set_offset(). */
-void ui_wifi_header(const char *title); /* page title, rule and Wi-Fi box, no rating box */
+void ui_header(const char *title,const char *badge); /* page title, rule, rating box (badge) and Wi-Fi box */
+void ui_text(const char *text,int x,int y,int size,bool paper); /* font size 12/16/24..., line-box origin */
+void ui_text_ink(const char *text,int size,int box[4]);          /* ink box x1,y1,x2,y2 at origin 0,0 */
+void ui_pill(int x,int y,int w,int h,int radius,bool ink);
 void ui_fill(int x,int y,int w,int h,bool ink);
 void ui_invert(int x,int y,int w,int h);
 void ui_set_offset(int y);

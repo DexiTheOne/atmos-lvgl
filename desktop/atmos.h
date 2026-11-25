@@ -32,11 +32,34 @@ int atmos_page(int position);
 void atmos_set_scenario(int scenario);
 void atmos_toggle_pause(void);
 void atmos_toggle_auto(void);
-/* Settings page (hardware test): open/close over whatever is shown. The model is
-   frozen while it is open; closing resumes the page (a transition restarts). */
+/* Settings page (settings.c): a circular list of settings ending in Exit, over the
+   frozen page. atmos_settings_key() is the middle key: opens the page, then changes
+   the selected setting (Exit closes). While it is open atmos_advance() moves the
+   selection (left up, right down). */
 void atmos_set_settings(bool open);
-void atmos_toggle_settings(void);
+void atmos_settings_key(void);
 bool atmos_settings_open(void);
+/* Settings rows, in list order and grouped (Display, Lighting, Alerts, Sensors, Wi-Fi;
+   Exit follows). The UI model owns the display and alert settings; the device owns
+   the volume and LED brightness (0-100 %), the status LEDs, LED auto dimming and CO2
+   automatic calibration (0/1), keeping them in step with atmos_set_device_setting(),
+   and the texts (Wi-Fi status, SSID, signal, IP address, CO2 calibration status) through
+   atmos_set_setting_text(). Calibrate CO2 is an action: it is only reported. */
+enum{ATMOS_SETTING_AUTO,ATMOS_SETTING_TEMPERATURE_UNIT,ATMOS_SETTING_PRESSURE_UNIT,ATMOS_SETTING_THEME,
+     ATMOS_SETTING_HISTORY,ATMOS_SETTING_OVERVIEW_DARK,
+     ATMOS_SETTING_LEDS,ATMOS_SETTING_LED_BRIGHTNESS,ATMOS_SETTING_LED_DIMMING,
+     ATMOS_SETTING_ALERT_SOUND,ATMOS_SETTING_VOLUME,ATMOS_SETTING_ALERT_FOCUS,
+     ATMOS_SETTING_CO2_ASC,ATMOS_SETTING_CO2_CALIBRATE,
+     ATMOS_SETTING_WIFI_STATUS,ATMOS_SETTING_WIFI_SSID,ATMOS_SETTING_WIFI_SIGNAL,ATMOS_SETTING_IP_ADDRESS,
+     ATMOS_SETTING_COUNT};
+/* Next setting changed (or action pressed) on the settings page (ATMOS_SETTING_*), or
+   -1: the device updates the matching entity (which saves it). */
+int atmos_poll_setting(void);
+void atmos_set_device_setting(int setting,int value);
+int atmos_device_setting(int setting);
+void atmos_set_setting_text(int setting,const char *text);
+/* Hide a row whose entity the device does not have (all are shown by default). */
+void atmos_set_setting_shown(int setting,bool shown);
 void atmos_set_hidden(bool hidden);
 /* Hardware integration: pass measured readings and disable the demo generator. */
 void atmos_set_readings(atmos_readings readings);
@@ -84,8 +107,8 @@ void atmos_select_overview(void);
 void atmos_set_low_light(bool dark);
 bool atmos_low_light(void);
 void atmos_set_overview_dark(bool on);
-/* Themes: light (the standard look); dark (the whole frame inverted); inverted (a dark
-   body above the history panel, which keeps its light chart; the overview all dark). */
+/* Themes: light (the standard look); dark (a dark body above the history panel, which
+   keeps its light chart; the overview all dark); inverted (the whole frame inverted). */
 enum{ATMOS_THEME_LIGHT,ATMOS_THEME_DARK,ATMOS_THEME_INVERTED,ATMOS_THEME_COUNT};
 void atmos_set_theme(int theme);
 int atmos_theme(void);

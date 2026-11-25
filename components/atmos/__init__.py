@@ -1,4 +1,4 @@
-﻿"""ESPHome external component running the platform-independent Atmos LVGL UI.
+"""ESPHome external component running the platform-independent Atmos LVGL UI.
 
 The component owns LVGL itself (ESPHome's lvgl: component is not used): it adds the
 LVGL library, uses the project's shared desktop/lv_conf.h, renders into a native
@@ -64,6 +64,15 @@ CONF_SENSOR = "sensor"
 CONF_STARTUP_DELAY = "startup_delay"
 CONF_LED_COLOR = "led_color"
 CONF_MARKER = "marker"
+CONF_SETTINGS = "settings"
+# Settings page rows the device owns, linked to existing entities: key, ATMOS_SETTING_*, kind.
+DEVICE_SETTINGS = (
+    ("alert_volume", "ATMOS_SETTING_VOLUME", "number"),  # 0-100 %
+    ("status_leds", "ATMOS_SETTING_LEDS", "light"),  # on/off and LED Brightness
+    ("led_auto_dimming", "ATMOS_SETTING_LED_DIMMING", "switch"),
+    ("co2_calibration", "ATMOS_SETTING_CO2_ASC", "switch"),
+)
+LightState = cg.esphome_ns.namespace("light").class_("LightState")
 # Overview tile markers (atmos.h ATMOS_MARK_*): "level" picks check / ringed ! / triangle.
 MARKERS = {"level": 0, "check": 1, "snowflake": 2, "cool": 3, "sun": 4, "flame": 5, "dry": 6, "drop": 7, "drops": 8}
 
@@ -296,6 +305,20 @@ CONFIG_SCHEMA = cv.Schema(
         # Any ESPHome sensor per reading. Once one is linked the demo data stops, and
         # unlinked readings show "--". Units: CO2 ppm, VOC/NOx index, formaldehyde ppb,
         # PM ug/m3, temperature degC, humidity %, pressure hPa (convert with filters).
+        # Entities behind the settings page's device-only rows (rows without one are hidden).
+        cv.Optional(CONF_SETTINGS, default={}): cv.Schema(
+            {
+                cv.Optional("alert_volume"): cv.use_id(number.Number),
+                cv.Optional("status_leds"): cv.use_id(LightState),
+                cv.Optional("led_auto_dimming"): cv.use_id(switch.Switch),
+                cv.Optional("co2_calibration"): cv.use_id(switch.Switch),
+                # Calibrate CO2: the button it presses, and the text sensor shown beside it.
+                cv.Optional("co2_calibrate"): cv.use_id(cg.esphome_ns.namespace("button").class_("Button")),
+                cv.Optional("co2_calibration_status"): cv.use_id(
+                    cg.esphome_ns.namespace("text_sensor").class_("TextSensor")
+                ),
+            }
+        ),
         cv.Optional(CONF_SENSORS, default={}): cv.Schema(
             {cv.Optional(key): SENSOR_LINK for key, _ in READINGS}
         ),
@@ -350,6 +373,21 @@ async def to_code(config):
         sel = await select.new_select(conf, options=["Auto Advance", "Overview"] + [name for _, name in READINGS])
         await cg.register_parented(sel, var)
         cg.add(var.set_reading_select(sel))
+    for key, setting, kind in DEVICE_SETTINGS:
+        if (ref := config[CONF_SETTINGS].get(key)) is not None:
+            entity = await cg.get_variable(ref)
+            setting = cg.RawExpression(setting)
+            if kind == "number":
+                cg.add(var.set_setting_number(setting, entity, 1.0))
+            elif kind == "light":
+                cg.add(var.set_setting_light(setting, entity))
+                cg.add(var.set_setting_light(cg.RawExpression("ATMOS_SETTING_LED_BRIGHTNESS"), entity))
+            else:
+                cg.add(var.set_setting_switch(setting, entity))
+    if (ref := config[CONF_SETTINGS].get("co2_calibrate")) is not None:
+        cg.add(var.set_calibrate_button(await cg.get_variable(ref)))
+    if (ref := config[CONF_SETTINGS].get("co2_calibration_status")) is not None:
+        cg.add(var.set_calibration_status(await cg.get_variable(ref)))
     for key, options, pressure in (
         (CONF_TEMPERATURE_UNIT, TEMPERATURE_UNITS, False),
         (CONF_PRESSURE_UNIT, PRESSURE_UNITS, True),
@@ -362,22 +400,27 @@ async def to_code(config):
             if key == CONF_THEME:
                 cg.add(sel.set_theme(True))
             cg.add(sel.set_initial(options.index(conf[CONF_INITIAL_OPTION])))
+            cg.add(var.set_setting_select(cg.RawExpression({CONF_TEMPERATURE_UNIT: "ATMOS_SETTING_TEMPERATURE_UNIT", CONF_PRESSURE_UNIT: "ATMOS_SETTING_PRESSURE_UNIT", CONF_THEME: "ATMOS_SETTING_THEME"}[key]), sel))
     if conf := config.get(CONF_AUTO_ADVANCE):
         sw = await switch.new_switch(conf)
         await cg.register_component(sw, conf)
         await cg.register_parented(sw, var)
         cg.add(var.set_auto_switch(sw))
+        cg.add(var.set_setting_switch(cg.RawExpression("ATMOS_SETTING_AUTO"), sw))
     if conf := config.get(CONF_ALERT_FOCUS):
         sw = await switch.new_switch(conf)
         await cg.register_component(sw, conf)
+        cg.add(var.set_setting_switch(cg.RawExpression("ATMOS_SETTING_ALERT_FOCUS"), sw))
     if conf := config.get(CONF_ALERT_SOUND):
         sw = await switch.new_switch(conf)
         await cg.register_component(sw, conf)
         cg.add(sw.set_kind(1))
+        cg.add(var.set_setting_switch(cg.RawExpression("ATMOS_SETTING_ALERT_SOUND"), sw))
     if conf := config.get(CONF_OVERVIEW_LOW_LIGHT):
         sw = await switch.new_switch(conf)
         await cg.register_component(sw, conf)
         cg.add(sw.set_kind(2))
+        cg.add(var.set_setting_switch(cg.RawExpression("ATMOS_SETTING_OVERVIEW_DARK"), sw))
     cg.add(var.set_alert_times(
         config[CONF_ALERT_ENTER].total_milliseconds / 1000.0,
         config[CONF_ALERT_LEAVE].total_milliseconds / 1000.0,
@@ -396,6 +439,8 @@ async def to_code(config):
             cg.add(num.set_history(history))
             cg.add(num.set_scale(scale))
             cg.add(num.set_initial_value(conf[CONF_INITIAL_VALUE]))
+            if history:
+                cg.add(var.set_setting_number(cg.RawExpression("ATMOS_SETTING_HISTORY"), num, 60.0))  # seconds per minute
 
 
 # atmos.next / atmos.previous: the device's two keys. Steps the underlined reading
